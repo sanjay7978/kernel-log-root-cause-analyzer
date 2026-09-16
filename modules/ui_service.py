@@ -372,3 +372,176 @@ def load_sample_log_content(category: str, filename: str) -> str:
     if not target.exists():
         raise FileNotFoundError(f"Sample log not found: {target}")
     return target.read_text(encoding="utf-8", errors="replace")
+
+
+def get_live_host_status_html() -> str:
+    """
+    Generate an HTML card summarizing host platform and kernel collection capabilities.
+    """
+    from modules.live_collector import get_collector_capabilities
+
+    caps = get_collector_capabilities()
+    os_name = caps["platform"]
+
+    if caps["is_linux"]:
+        dmesg_status = "✅ Available" if caps["has_dmesg"] else "❌ Not found"
+        journalctl_status = "✅ Available" if caps["has_journalctl"] else "❌ Not found"
+        return (
+            f'<div style="background-color:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:12px 16px; margin:8px 0;">'
+            f'<div style="font-weight:700; color:#166534; display:flex; align-items:center; gap:8px;">'
+            f'🐧 Linux Host Environment ({os_name})</div>'
+            f'<div style="font-size:13px; color:#15803d; margin-top:4px;">'
+            f'Live collection is active. <code>dmesg</code>: {dmesg_status} | <code>journalctl</code>: {journalctl_status}</div>'
+            f'</div>'
+        )
+
+    return (
+        f'<div style="background-color:#f8fafc; border:1px solid #cbd5e1; border-left:4px solid #0284c7; border-radius:8px; padding:12px 16px; margin:8px 0;">'
+        f'<div style="font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">'
+        f'🍎 {os_name} Development Host Detected</div>'
+        f'<div style="font-size:13px; color:#475569; margin-top:4px; line-height:1.4;">'
+        f'Native Linux kernel collection requires Linux. On macOS, live collection runs inside your Ubuntu VM. '
+        f'For macOS testing, use the <strong>Upload Log File</strong> or <strong>Paste Log Text</strong> tabs.</div>'
+        f'</div>'
+    )
+
+
+def run_live_ui_analysis(
+    collector_type: str = "auto",
+    boot_offset: int = 0,
+    lines: int = 1000,
+    model_override: Optional[str] = None,
+    ollama_client: Optional[OllamaClient] = None,
+) -> Tuple[str, str, str, str, str, str, str, str, str, str, str, str]:
+    """
+    UI Controller entrypoint for live Linux kernel capture.
+
+    Returns a 12-tuple matching the Gradio output components:
+      1. status_html
+      2. root_cause_text
+      3. subsystem_badge_html
+      4. severity_badge_html
+      5. confidence_badge_html
+      6. evidence_html
+      7. explanation_text
+      8. commands_html
+      9. fixes_markdown
+      10. uncertainty_text
+      11. metrics_markdown
+      12. cleaned_log_excerpt
+    """
+    empty_result = ("", "", "", "", "", "", "", "", "", "", "", "")
+
+    from modules.analyzer import analyze_live
+    from modules.live_collector import (
+        CollectionExecutionError,
+        CollectorNotFoundError,
+        PermissionDeniedError,
+        PlatformNotSupportedError,
+    )
+
+    try:
+        result = analyze_live(
+            collector_type=collector_type,
+            boot_offset=boot_offset,
+            lines=lines,
+            model=model_override,
+            ollama_client=ollama_client,
+        )
+    except PlatformNotSupportedError as err:
+        return (
+            format_error_html(
+                "Host Platform Incompatible",
+                str(err),
+                "Run this command inside your Ubuntu VM, or use stored sample logs in the Upload/Paste tabs.",
+            ),
+            *empty_result[1:],
+        )
+    except PermissionDeniedError as err:
+        return (
+            format_error_html(
+                "Kernel Log Read Permission Denied",
+                str(err),
+                "Run with sudo or grant CAP_SYSLOG / disable kernel.dmesg_restrict.",
+            ),
+            *empty_result[1:],
+        )
+    except CollectorNotFoundError as err:
+        return (
+            format_error_html(
+                "Collector Binary Not Found",
+                str(err),
+                "Install util-linux (for dmesg) or systemd (for journalctl).",
+            ),
+            *empty_result[1:],
+        )
+    except CollectionExecutionError as err:
+        return (
+            format_error_html(
+                "Live Collection Failed",
+                str(err),
+                "Verify the kernel ring buffer is populated.",
+            ),
+            *empty_result[1:],
+        )
+    except OllamaConnectionError as err:
+        return (
+            format_error_html(
+                "Ollama Daemon Unreachable",
+                str(err),
+                "Make sure Ollama is running locally: `ollama serve`",
+            ),
+            *empty_result[1:],
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error during live UI analysis")
+        return (
+            format_error_html(
+                "Live Analysis Failed",
+                f"An unexpected error occurred: {exc}",
+            ),
+            *empty_result[1:],
+        )
+
+    a = result.analysis
+    t = result.timing_metrics
+    s = result.preprocessed_stats
+
+    status_banner = (
+        f'<div style="background-color:#f0fdf4; border:1px solid #bbf7d0; border-left:5px solid #22c55e; '
+        f'border-radius:8px; padding:12px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
+        f'<div><span style="font-weight:700; color:#166534;">✅ Live Capture Complete</span> — Source: <code>{html.escape(result.log_file_path or "Live Linux")}</code></div>'
+        f'<div style="font-size:13px; color:#15803d;">Model: <strong>{html.escape(result.model_name)}</strong> | '
+        f'Capture: <strong>{t.get("collect_ms", 0):.0f} ms</strong> | '
+        f'Total time: <strong>{t.get("total_pipeline_ms", 0):.0f} ms</strong></div>'
+        f'</div>'
+    )
+
+    return (
+        status_banner,
+        a.root_cause,
+        format_subsystem_badge(a.subsystem),
+        format_severity_badge(a.severity),
+        format_confidence_badge(a.confidence),
+        format_evidence_list(a.evidence),
+        a.explanation,
+        format_commands_list(a.commands),
+        format_markdown_list(a.possible_fixes, empty_msg="*(No remediation steps suggested)*"),
+        a.uncertainty,
+        (
+            f"| Metric | Value |\n"
+            f"| :--- | :--- |\n"
+            f"| **Source** | `{result.log_file_path}` |\n"
+            f"| **Capture Time** | {t.get('collect_ms', 0):.2f} ms |\n"
+            f"| **Raw Lines Captured** | {s.original_line_count:,} |\n"
+            f"| **Cleaned Lines** | {s.cleaned_line_count:,} |\n"
+            f"| **Noise Reduction** | {s.reduction_percentage:.1f}% |\n"
+            f"| **Candidate Markers Flagged** | {s.candidate_evidence_count} |\n"
+            f"| **Local Model Used** | `{result.model_name}` |\n"
+            f"| **LLM Eval Tokens** | {t.get('ollama_eval_count', 0):.0f} tokens |\n"
+            f"| **LLM Inference Time** | {t.get('llm_inference_ms', 0):.2f} ms |\n"
+            f"| **Total Pipeline Time** | {t.get('total_pipeline_ms', 0):.2f} ms |\n"
+        ),
+        result.cleaned_log_excerpt,
+    )
+

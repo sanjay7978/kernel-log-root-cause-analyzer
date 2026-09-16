@@ -196,3 +196,43 @@ def analyze_log(
         ollama_client=ollama_client,
         initial_timings={"load_ms": load_duration_ms},
     )
+
+
+def analyze_live(
+    collector_type: str = "auto",
+    boot_offset: int = 0,
+    lines: Optional[int] = None,
+    model: Optional[str] = None,
+    ollama_client: Optional[OllamaClient] = None,
+) -> PipelineExecutionResult:
+    """
+    Capture live kernel logs from the Linux host (dmesg or journalctl)
+    and execute the root cause analysis pipeline.
+
+    Parameters:
+        collector_type: 'auto', 'dmesg', or 'journalctl'.
+        boot_offset: 0 for current boot, -1 for previous boot.
+        lines: Maximum number of lines to capture.
+        model: Optional model override.
+        ollama_client: Optional pre-configured OllamaClient.
+
+    Returns:
+        PipelineExecutionResult: Container with validated analysis, stats, and timings.
+    """
+    from modules.live_collector import collect_live_kernel_log
+
+    t0 = time.perf_counter()
+    raw_content, source_label = collect_live_kernel_log(
+        collector_type=collector_type,
+        boot_offset=boot_offset,
+        lines=lines,
+    )
+    collect_duration_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+    return analyze_raw_content(
+        raw_content=raw_content,
+        source_label=source_label,
+        model=model,
+        ollama_client=ollama_client,
+        initial_timings={"collect_ms": collect_duration_ms},
+    )

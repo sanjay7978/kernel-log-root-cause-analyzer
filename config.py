@@ -81,3 +81,11 @@ VALID_SEVERITIES: tuple[str, ...] = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 GRADIO_SERVER_NAME: str = os.getenv("GRADIO_SERVER_NAME", "127.0.0.1")
 GRADIO_SERVER_PORT: int = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
 GRADIO_SHARE: bool = os.getenv("GRADIO_SHARE", "False").lower() in ("true", "1", "yes")
+
+# ============================================================
+# Phase 3B: Live Linux Kernel Collection Settings
+# ============================================================
+
+DEFAULT_LIVE_LOG_LINES: int = int(os.getenv("DEFAULT_LIVE_LOG_LINES", "1000"))
+SUPPORTED_LIVE_COLLECTORS: tuple[str, ...] = ("auto", "dmesg", "journalctl")
+LIVE_COLLECTION_TIMEOUT_SECONDS: int = int(os.getenv("LIVE_COLLECTION_TIMEOUT_SECONDS", "15"))

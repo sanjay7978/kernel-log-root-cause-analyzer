@@ -13,8 +13,14 @@ import json
 import sys
 from pathlib import Path
 
-from config import OLLAMA_MODEL
-from modules.analyzer import analyze_log
+from config import DEFAULT_LIVE_LOG_LINES, OLLAMA_MODEL
+from modules.analyzer import analyze_live, analyze_log
+from modules.live_collector import (
+    CollectionExecutionError,
+    CollectorNotFoundError,
+    PermissionDeniedError,
+    PlatformNotSupportedError,
+)
 from modules.llm_analyzer import (
     OllamaConnectionError,
     OllamaError,
@@ -100,6 +106,33 @@ Examples:
         "--json",
         action="store_true",
         help="Output analysis report as formatted JSON.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Capture and analyze live kernel logs directly from the host (auto-detects collector).",
+    )
+    parser.add_argument(
+        "--live-dmesg",
+        action="store_true",
+        help="Capture and analyze live kernel logs using dmesg specifically.",
+    )
+    parser.add_argument(
+        "--live-journalctl",
+        action="store_true",
+        help="Capture and analyze live kernel logs using journalctl -k specifically.",
+    )
+    parser.add_argument(
+        "--boot-offset",
+        type=int,
+        default=0,
+        help="Boot offset for journalctl (default 0 for current boot, -1 for previous boot).",
+    )
+    parser.add_argument(
+        "--live-lines",
+        type=int,
+        default=DEFAULT_LIVE_LOG_LINES,
+        help=f"Maximum lines to capture during live collection (default: {DEFAULT_LIVE_LOG_LINES}).",
     )
     parser.add_argument(
         "--save-report",
@@ -224,58 +257,110 @@ def main() -> int:
         gradio_app.launch()
         return 0
 
-    if not args.log_path:
-        print("\n[ERROR] No kernel log file provided. Specify a path or use --ui to launch the web interface.\n", file=sys.stderr)
-        print("Usage: python app.py <path_to_log_file>   OR   python app.py --ui\n")
+    # Check if live capture mode is requested
+    is_live = args.live or args.live_dmesg or args.live_journalctl
+
+    if not is_live and not args.log_path:
+        print(
+            "\n[ERROR] No kernel log file provided. Specify a file path, "
+            "use a live capture flag (--live, --live-dmesg, --live-journalctl), "
+            "or use --ui to launch the web interface.\n",
+            file=sys.stderr,
+        )
+        print("Usage: python app.py <path_to_log_file>   OR   python app.py --live   OR   python app.py --ui\n")
         return 1
 
-    log_path = Path(args.log_path)
+    if is_live:
+        collector = "dmesg" if args.live_dmesg else ("journalctl" if args.live_journalctl else "auto")
+        try:
+            print(f"\nCapturing live kernel log using '{collector}' (model: '{args.model or OLLAMA_MODEL}')...")
+            result = analyze_live(
+                collector_type=collector,
+                boot_offset=args.boot_offset,
+                lines=args.live_lines,
+                model=args.model,
+            )
+        except PlatformNotSupportedError as err:
+            print(f"\n[ERROR] Platform Incompatible:\n  {err}\n", file=sys.stderr)
+            return 1
+        except PermissionDeniedError as err:
+            print(f"\n[ERROR] Permission Denied:\n  {err}\n  Hint: Run with sudo or grant CAP_SYSLOG.\n", file=sys.stderr)
+            return 1
+        except CollectorNotFoundError as err:
+            print(f"\n[ERROR] Collector Tool Not Found:\n  {err}\n", file=sys.stderr)
+            return 1
+        except CollectionExecutionError as err:
+            print(f"\n[ERROR] Live Collection Execution Error:\n  {err}\n", file=sys.stderr)
+            return 1
+        except OllamaConnectionError as err:
+            print(f"\n[ERROR] Ollama Connection Failure:\n  {err}\n  Hint: Start Ollama by running 'ollama serve' in a terminal.\n", file=sys.stderr)
+            return 1
+        except OllamaModelNotFoundError as err:
+            print(f"\n[ERROR] Model Not Available:\n  {err}\n", file=sys.stderr)
+            return 1
+        except OllamaTimeoutError as err:
+            print(f"\n[ERROR] Inference Timeout:\n  {err}\n", file=sys.stderr)
+            return 1
+        except OllamaResponseError as err:
+            print(f"\n[ERROR] Ollama Server Error:\n  {err}\n", file=sys.stderr)
+            return 1
+        except MalformedJSONError as err:
+            print(f"\n[ERROR] Model output could not be parsed into JSON:\n  {err}\n", file=sys.stderr)
+            return 1
+        except ValidationError as err:
+            print(f"\n[ERROR] Model output failed schema validation:\n  {err}\n", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"\n[UNEXPECTED ERROR] {exc}\n", file=sys.stderr)
+            return 1
+    else:
+        log_path = Path(args.log_path)
 
-    # 1. Phase 1 mode check
-    if args.preprocess_only:
-        return run_preprocess_only(args, log_path)
+        # 1. Phase 1 mode check
+        if args.preprocess_only:
+            return run_preprocess_only(args, log_path)
 
-    # 2. Phase 2 Full Pipeline Execution
-    try:
-        print(f"\nAnalyzing '{log_path.name}' using local model '{args.model or OLLAMA_MODEL}' via Ollama...")
-        result = analyze_log(file_path=log_path, model=args.model)
+        # 2. Phase 2 Full Pipeline Execution
+        try:
+            print(f"\nAnalyzing '{log_path.name}' using local model '{args.model or OLLAMA_MODEL}' via Ollama...")
+            result = analyze_log(file_path=log_path, model=args.model)
 
-    except LogFileNotFoundError as err:
-        print(f"\n[ERROR] File not found: {err}\n", file=sys.stderr)
-        return 1
-    except LogNotAFileError as err:
-        print(f"\n[ERROR] Invalid path: {err}\n", file=sys.stderr)
-        return 1
-    except LogFileEmptyError as err:
-        print(f"\n[ERROR] Log file is empty: {err}\n", file=sys.stderr)
-        return 1
-    except LogFileTooLargeError as err:
-        print(f"\n[ERROR] File exceeds size limit: {err}\n", file=sys.stderr)
-        return 1
-    except LogFileAccessError as err:
-        print(f"\n[ERROR] Permission error: {err}\n", file=sys.stderr)
-        return 1
-    except OllamaConnectionError as err:
-        print(f"\n[ERROR] Ollama Connection Failure:\n  {err}\n  Hint: Start Ollama by running 'ollama serve' in a terminal.\n", file=sys.stderr)
-        return 1
-    except OllamaModelNotFoundError as err:
-        print(f"\n[ERROR] Model Not Available:\n  {err}\n", file=sys.stderr)
-        return 1
-    except OllamaTimeoutError as err:
-        print(f"\n[ERROR] Inference Timeout:\n  {err}\n", file=sys.stderr)
-        return 1
-    except OllamaResponseError as err:
-        print(f"\n[ERROR] Ollama Server Error:\n  {err}\n", file=sys.stderr)
-        return 1
-    except MalformedJSONError as err:
-        print(f"\n[ERROR] Model output could not be parsed into JSON:\n  {err}\n", file=sys.stderr)
-        return 1
-    except ValidationError as err:
-        print(f"\n[ERROR] Model output failed schema validation:\n  {err}\n", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"\n[UNEXPECTED ERROR] {exc}\n", file=sys.stderr)
-        return 1
+        except LogFileNotFoundError as err:
+            print(f"\n[ERROR] File not found: {err}\n", file=sys.stderr)
+            return 1
+        except LogNotAFileError as err:
+            print(f"\n[ERROR] Invalid path: {err}\n", file=sys.stderr)
+            return 1
+        except LogFileEmptyError as err:
+            print(f"\n[ERROR] Log file is empty: {err}\n", file=sys.stderr)
+            return 1
+        except LogFileTooLargeError as err:
+            print(f"\n[ERROR] File exceeds size limit: {err}\n", file=sys.stderr)
+            return 1
+        except LogFileAccessError as err:
+            print(f"\n[ERROR] Permission error: {err}\n", file=sys.stderr)
+            return 1
+        except OllamaConnectionError as err:
+            print(f"\n[ERROR] Ollama Connection Failure:\n  {err}\n  Hint: Start Ollama by running 'ollama serve' in a terminal.\n", file=sys.stderr)
+            return 1
+        except OllamaModelNotFoundError as err:
+            print(f"\n[ERROR] Model Not Available:\n  {err}\n", file=sys.stderr)
+            return 1
+        except OllamaTimeoutError as err:
+            print(f"\n[ERROR] Inference Timeout:\n  {err}\n", file=sys.stderr)
+            return 1
+        except OllamaResponseError as err:
+            print(f"\n[ERROR] Ollama Server Error:\n  {err}\n", file=sys.stderr)
+            return 1
+        except MalformedJSONError as err:
+            print(f"\n[ERROR] Model output could not be parsed into JSON:\n  {err}\n", file=sys.stderr)
+            return 1
+        except ValidationError as err:
+            print(f"\n[ERROR] Model output failed schema validation:\n  {err}\n", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"\n[UNEXPECTED ERROR] {exc}\n", file=sys.stderr)
+            return 1
 
     # 3. Output formatting
     if args.json:

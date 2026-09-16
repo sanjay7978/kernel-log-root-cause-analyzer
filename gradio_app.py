@@ -28,7 +28,9 @@ from config import (
     SAMPLE_LOGS_DIR,
 )
 from modules.ui_service import (
+    get_live_host_status_html,
     load_sample_log_content,
+    run_live_ui_analysis,
     run_ui_analysis,
 )
 
@@ -171,6 +173,7 @@ def clear_inputs_and_outputs():
         "",     # fixes
         "",     # uncertainty
         "",     # metrics table
+        "",     # preprocessed log view
     )
 
 
@@ -191,7 +194,7 @@ def create_ui():
                 <div>
                     <span class="model-badge">⚡ Engine: Ollama / {OLLAMA_MODEL}</span>
                     <span class="model-badge" style="background:#0f172a; color:#a7f3d0; border-color:#065f46;">🔒 100% Private (On-Device Inference)</span>
-                    <span class="model-badge" style="background:#0f172a; color:#fde047; border-color:#854d0e;">📋 Phase 3A: Stored / Uploaded / Pasted Logs</span>
+                    <span class="model-badge" style="background:#0f172a; color:#fde047; border-color:#854d0e;">📋 Phase 3B: Stored, Pasted & Live Linux Capture</span>
                 </div>
             </div>
             """
@@ -221,9 +224,35 @@ def create_ui():
                             max_lines=25,
                         )
 
+                    with gr.TabItem("🐧 Live Linux Capture", id="tab_live"):
+                        gr.HTML(value=get_live_host_status_html())
+                        with gr.Row():
+                            live_collector_radio = gr.Radio(
+                                choices=["auto", "dmesg", "journalctl"],
+                                value="auto",
+                                label="Collection Utility",
+                                info="auto selects journalctl if systemd is active, dmesg otherwise",
+                            )
+                        with gr.Row():
+                            boot_offset_input = gr.Number(
+                                value=0,
+                                label="Boot Offset (journalctl -b)",
+                                precision=0,
+                                info="0 = current boot, -1 = previous boot (post-crash investigation)",
+                            )
+                            live_lines_slider = gr.Slider(
+                                minimum=100,
+                                maximum=5000,
+                                value=1000,
+                                step=100,
+                                label="Max Lines to Capture",
+                                info="Recent lines to read from ring buffer",
+                            )
+                        analyze_live_btn = gr.Button("🐧 Capture & Analyze Live Kernel Log", variant="primary")
+
                 # Action and Sample Buttons
                 with gr.Row():
-                    analyze_btn = gr.Button("🔍 Run Root Cause Analysis", variant="primary", scale=2)
+                    analyze_btn = gr.Button("🔍 Run Root Cause Analysis (File/Pasted)", variant="primary", scale=2)
                     clear_btn = gr.Button("↺ Clear All", variant="secondary", scale=1)
 
                 # Quick sample incident loader
@@ -385,6 +414,27 @@ def create_ui():
             outputs=[log_file_input, pasted_log_input, status_feedback],
         )
 
+        # Live Linux analyze button click
+        analyze_live_btn.click(
+            fn=run_live_ui_analysis,
+            inputs=[live_collector_radio, boot_offset_input, live_lines_slider],
+            outputs=[
+                status_banner_html,
+                root_cause_out,
+                subsystem_badge_out,
+                severity_badge_out,
+                confidence_badge_out,
+                evidence_out,
+                explanation_out,
+                commands_out,
+                fixes_out,
+                uncertainty_out,
+                metrics_table_out,
+                preprocessed_log_view,
+            ],
+            show_progress="full",
+        )
+
         # Clear button
         clear_btn.click(
             fn=clear_inputs_and_outputs,
@@ -404,6 +454,7 @@ def create_ui():
                 fixes_out,
                 uncertainty_out,
                 metrics_table_out,
+                preprocessed_log_view,
             ],
         )
 
