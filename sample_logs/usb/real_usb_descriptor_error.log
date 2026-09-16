@@ -1,0 +1,15 @@
+[   45.102341] usb 1-1: new high-speed USB device number 4 using xhci_hcd
+[   50.218542] usb 1-1: device descriptor read/64, error -110
+[   50.454231] usb 1-1: device descriptor read/64, error -110
+[   50.690112] usb 1-1: device descriptor read/64, error -110
+[   50.926040] usb 1-1: device descriptor read/64, error -110
+[   51.162018] usb 1-1: reset high-speed USB device number 4 using xhci_hcd
+[   56.278234] usb 1-1: device descriptor read/64, error -110
+[   56.514120] usb 1-1: device descriptor read/64, error -110
+[   56.750051] usb 1-1: device descriptor read/64, error -110
+[   56.986011] usb 1-1: device descriptor read/64, error -110
+[   57.222041] usb 1-1: reset high-speed USB device number 4 using xhci_hcd
+[   57.534120] usb 1-1: Device not responding to setup address.
+[   57.742010] usb 1-1: Device not responding to setup address.
+[   57.950125] usb 1-1: device not accepting address 4, error -71
+[   57.950201] usb 1-1: unable to enumerate USB device

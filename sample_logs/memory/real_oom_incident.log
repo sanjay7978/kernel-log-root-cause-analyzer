@@ -1,0 +1,35 @@
+[  120.450123] stress-ng invoked oom-killer: gfp_mask=0x1100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+[  120.450128] CPU: 2 PID: 3412 Comm: stress-ng Not tainted 6.5.0-28-generic #29~22.04.1-Ubuntu
+[  120.450131] Hardware name: QEMU Standard PC (Q35 + ICH9, 2009), BIOS 1.16.2-ubuntu-1 04/01/2014
+[  120.450133] Call Trace:
+[  120.450135]  <TASK>
+[  120.450138]  dump_stack_lvl+0x48/0x70
+[  120.450145]  dump_stack+0x10/0x20
+[  120.450148]  dump_header+0x50/0x230
+[  120.450153]  oom_kill_process+0x104/0x1c0
+[  120.450156]  out_of_memory+0x248/0x590
+[  120.450161]  __alloc_pages_slowpath.constprop.0+0x808/0xc50
+[  120.450167]  __alloc_pages+0x32c/0x350
+[  120.450171]  handle_mm_fault+0xb2e/0x1400
+[  120.450176]  do_user_addr_fault+0x310/0x680
+[  120.450181]  exc_page_fault+0x7c/0x180
+[  120.450186]  asm_exc_page_fault+0x26/0x30
+[  120.450190]  </TASK>
+[  120.450192] Mem-Info:
+[  120.450195] active_anon:967812 inactive_anon:1204 isolated_anon:0
+[  120.450195]  active_file:128 inactive_file:162 isolated_file:0
+[  120.450195]  unevictable:0 dirty:0 writeback:0
+[  120.450195]  slab_reclaimable:14120 slab_unreclaimable:18940
+[  120.450200] Node 0 active_anon:3871248kB inactive_anon:4816kB active_file:512kB inactive_file:648kB unevictable:0kB
+[  120.450205] Node 0 DMA free:14860kB boost:0kB min:28kB low:36kB high:44kB reserved_highatomic:0KB active_anon:0kB inactive_anon:0kB
+[  120.450212] Node 0 DMA32 free:45200kB boost:0kB min:3212kB low:4012kB high:4812kB reserved_highatomic:0KB active_anon:280144kB inactive_anon:0kB
+[  120.450219] Node 0 Normal free:32408kB boost:0kB min:14108kB low:17632kB high:21156kB reserved_highatomic:0KB active_anon:3591104kB inactive_anon:4816kB
+[  120.450226] Tasks state (memory values in pages):
+[  120.450227] [  pid  ]   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+[  120.450229] [    412]     0   412    28412     1024       229376        0             0 systemd-journal
+[  120.450233] [    598]     0   598     6840      512        73728        0             0 systemd-udevd
+[  120.450237] [    892]   100   892     4120      640        65536        0             0 systemd-network
+[  120.450241] [   3412]  1000  3412   984512   961200      7864320        0             0 stress-ng-vm
+[  120.450246] oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,task=stress-ng-vm,pid=3412,uid=1000
+[  120.450255] Out of memory: Killed process 3412 (stress-ng-vm) total-vm:3938048kB, anon-rss:3844800kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:7680kB oom_score_adj:0
+[  120.455610] stress-ng: info: [3412] process killed by OOM killer

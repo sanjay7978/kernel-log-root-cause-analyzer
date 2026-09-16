@@ -1,0 +1,7 @@
+# Dependencies for Kernel Log Root Cause Analyzer
+# Phase 1: Pure Python standard library
+# Phase 2: Lightweight local Ollama REST API integration
+# Phase 3A: Gradio UI & Pytest automated test suite
+
+pytest>=8.0.0
+gradio>=4.0.0

@@ -1,0 +1,14 @@
+[
+  {
+    "filename": "sample_logs/memory/real_oom_incident.log",
+    "category": "memory",
+    "source": "Ubuntu 22.04 LTS Kernel 6.5 (stress-ng memory exhaustion test)",
+    "description": "Real Linux kernel out-of-memory event with stack trace, node memory info, process table dump, and OOM killer invocation terminating stress-ng-vm."
+  },
+  {
+    "filename": "sample_logs/usb/real_usb_descriptor_error.log",
+    "category": "usb",
+    "source": "Linux Kernel Bugzilla & dmesg USB subsystem log",
+    "description": "Real USB enumeration failure where a faulty high-speed peripheral times out on descriptor read (error -110), triggers repeated bus resets, and fails address negotiation (error -71)."
+  }
+]
