@@ -1,0 +1,9 @@
+[  184.512010] [drm:amdgpu_job_timedout [amdgpu]] *ERROR* ring gfx timeout, signaled seq=41230, emitted seq=41232
+[  184.512085] [drm:amdgpu_job_timedout [amdgpu]] *ERROR* Process information: process blender pid 2841 thread blender:cs0 pid 2855
+[  184.512140] amdgpu 0000:03:00.0: amdgpu: GPU reset begin!
+[  184.512148] amdgpu 0000:03:00.0: amdgpu: BACO reset
+[  184.720311] amdgpu 0000:03:00.0: amdgpu: GPU reset succeeded, trying to resume
+[  184.720450] [drm] PCIE GART of 512M enabled (table at 0x000000F400000000).
+[  184.720510] [drm] VRAM is lost due to GPU reset!
+[  184.745120] [drm] ring gfx uses bo cpu addr 0x00000000b52a0a25 and gpu addr 0x01000000
+[  184.750231] amdgpu 0000:03:00.0: amdgpu: GPU reset(1) succeeded!

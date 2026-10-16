@@ -28,7 +28,9 @@ from config import (
     SAMPLE_LOGS_DIR,
 )
 from modules.ui_service import (
+    get_live_host_status_html,
     load_sample_log_content,
+    run_live_ui_analysis,
     run_ui_analysis,
 )
 
@@ -136,6 +138,19 @@ CUSTOM_CSS = """
 """
 
 
+SAMPLE_LOG_CHOICES = {
+    "Memory: OOM Killer (stress-ng)": ("memory", "real_oom_incident.log"),
+    "USB: Device Descriptor Timeout (-110)": ("usb", "real_usb_descriptor_error.log"),
+    "Filesystem: EXT4 Metadata Corruption (Read-Only)": ("filesystem", "real_ext4_corruption.log"),
+    "Storage: SATA / ATA Read I/O Media Error (UNC)": ("storage", "real_ata_io_error.log"),
+    "Network: NETDEV Watchdog Transmit Queue Timeout": ("network", "real_netdev_watchdog_tx_timeout.log"),
+    "GPU: AMDGPU Ring Timeout & Reset Recovery": ("gpu", "real_amdgpu_ring_timeout.log"),
+    "Driver: Intel iwlwifi Missing Firmware Probe Failure": ("driver", "real_driver_probe_failure.log"),
+    "Panic: Fatal Kernel NULL Pointer Dereference (#PF)": ("panic", "real_kernel_panic_null_deref.log"),
+    "ACPI: BIOS AML Namespace Lookup Error (AE_NOT_FOUND)": ("acpi", "real_acpi_bios_error.log"),
+}
+
+
 def load_oom_example():
     """Helper to populate pasted text box with authentic OOM sample log."""
     try:
@@ -150,6 +165,18 @@ def load_usb_example():
     try:
         content = load_sample_log_content("usb", "real_usb_descriptor_error.log")
         return None, content, "Loaded real USB descriptor timeout incident from sample_logs/usb/real_usb_descriptor_error.log"
+    except Exception as exc:
+        return None, "", f"Failed to load sample: {exc}"
+
+
+def load_sample_by_choice(choice: str):
+    """Helper to populate pasted text box from chosen sample log."""
+    if not choice or choice not in SAMPLE_LOG_CHOICES:
+        return None, gr.update(), ""
+    cat, filename = SAMPLE_LOG_CHOICES[choice]
+    try:
+        content = load_sample_log_content(cat, filename)
+        return None, content, f"Loaded real {choice} incident from sample_logs/{cat}/{filename}"
     except Exception as exc:
         return None, "", f"Failed to load sample: {exc}"
 
@@ -171,6 +198,7 @@ def clear_inputs_and_outputs():
         "",     # fixes
         "",     # uncertainty
         "",     # metrics table
+        "",     # preprocessed log view
     )
 
 
@@ -191,7 +219,7 @@ def create_ui():
                 <div>
                     <span class="model-badge">⚡ Engine: Ollama / {OLLAMA_MODEL}</span>
                     <span class="model-badge" style="background:#0f172a; color:#a7f3d0; border-color:#065f46;">🔒 100% Private (On-Device Inference)</span>
-                    <span class="model-badge" style="background:#0f172a; color:#fde047; border-color:#854d0e;">📋 Phase 3A: Stored / Uploaded / Pasted Logs</span>
+                    <span class="model-badge" style="background:#0f172a; color:#fde047; border-color:#854d0e;">📋 Phase 3B: Stored, Pasted & Live Linux Capture</span>
                 </div>
             </div>
             """
@@ -221,9 +249,35 @@ def create_ui():
                             max_lines=25,
                         )
 
+                    with gr.TabItem("🐧 Live Linux Capture", id="tab_live"):
+                        gr.HTML(value=get_live_host_status_html())
+                        with gr.Row():
+                            live_collector_radio = gr.Radio(
+                                choices=["auto", "dmesg", "journalctl"],
+                                value="auto",
+                                label="Collection Utility",
+                                info="auto selects journalctl if systemd is active, dmesg otherwise",
+                            )
+                        with gr.Row():
+                            boot_offset_input = gr.Number(
+                                value=0,
+                                label="Boot Offset (journalctl -b)",
+                                precision=0,
+                                info="0 = current boot, -1 = previous boot (post-crash investigation)",
+                            )
+                            live_lines_slider = gr.Slider(
+                                minimum=100,
+                                maximum=5000,
+                                value=1000,
+                                step=100,
+                                label="Max Lines to Capture",
+                                info="Recent lines to read from ring buffer",
+                            )
+                        analyze_live_btn = gr.Button("🐧 Capture & Analyze Live Kernel Log", variant="primary")
+
                 # Action and Sample Buttons
                 with gr.Row():
-                    analyze_btn = gr.Button("🔍 Run Root Cause Analysis", variant="primary", scale=2)
+                    analyze_btn = gr.Button("🔍 Run Root Cause Analysis (File/Pasted)", variant="primary", scale=2)
                     clear_btn = gr.Button("↺ Clear All", variant="secondary", scale=1)
 
                 # Quick sample incident loader
@@ -232,6 +286,13 @@ def create_ui():
                 with gr.Row():
                     load_oom_btn = gr.Button("📂 Load Real Memory OOM Log", size="sm")
                     load_usb_btn = gr.Button("📂 Load Real USB Timeout Log", size="sm")
+                with gr.Row():
+                    sample_dropdown = gr.Dropdown(
+                        choices=["-- Select a sample log to load --"] + list(SAMPLE_LOG_CHOICES.keys()),
+                        value="-- Select a sample log to load --",
+                        label="⚡ Or Select from All 9 Real Subsystem Incidents",
+                        interactive=True,
+                    )
 
             # Status and Architecture Notes Column
             with gr.Column(scale=3):
@@ -385,6 +446,33 @@ def create_ui():
             outputs=[log_file_input, pasted_log_input, status_feedback],
         )
 
+        sample_dropdown.change(
+            fn=load_sample_by_choice,
+            inputs=[sample_dropdown],
+            outputs=[log_file_input, pasted_log_input, status_feedback],
+        )
+
+        # Live Linux analyze button click
+        analyze_live_btn.click(
+            fn=run_live_ui_analysis,
+            inputs=[live_collector_radio, boot_offset_input, live_lines_slider],
+            outputs=[
+                status_banner_html,
+                root_cause_out,
+                subsystem_badge_out,
+                severity_badge_out,
+                confidence_badge_out,
+                evidence_out,
+                explanation_out,
+                commands_out,
+                fixes_out,
+                uncertainty_out,
+                metrics_table_out,
+                preprocessed_log_view,
+            ],
+            show_progress="full",
+        )
+
         # Clear button
         clear_btn.click(
             fn=clear_inputs_and_outputs,
@@ -404,6 +492,7 @@ def create_ui():
                 fixes_out,
                 uncertainty_out,
                 metrics_table_out,
+                preprocessed_log_view,
             ],
         )
 

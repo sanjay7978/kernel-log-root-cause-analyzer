@@ -1,0 +1,8 @@
+[  842.102341] EXT4-fs error (device sda2): ext4_lookup:1842: inode #2097153: comm pool: deleted inode referenced: 2097154
+[  842.102349] EXT4-fs (sda2): Remounting filesystem read-only
+[  842.102353] EXT4-fs error (device sda2) in ext4_reserve_inode_write:5488: Readonly filesystem
+[  842.105412] Aborting journal on device sda2-8.
+[  842.105420] EXT4-fs (sda2): Remounting filesystem read-only
+[  842.108920] EXT4-fs error (device sda2): ext4_put_super:1208: Couldn't clean up the journal
+[  842.112001] EXT4-fs (sda2): I/O error while writing superblock
+[  842.112045] EXT4-fs (sda2): previous I/O error to superblock detected

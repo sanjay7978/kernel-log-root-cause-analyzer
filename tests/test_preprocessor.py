@@ -6,7 +6,6 @@ consecutive deduplication, evidence detection, and determinism using pytest.
 """
 
 import time
-import pytest
 
 from modules.preprocessor import (
     preprocess_kernel_log,

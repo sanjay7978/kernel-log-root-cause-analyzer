@@ -1,0 +1,13 @@
+[  312.450110] ata1.00: exception Emask 0x0 SAct 0x7fffffff SErr 0x0 action 0x6 frozen
+[  312.450118] ata1.00: failed command: READ FPDMA QUEUED
+[  312.450124] ata1.00: cmd 60/08:00:00:10:00/00:00:00:00:00/40 tag 0 ncq dma 4096 in
+[  312.450124]          res 41/40:00:00:10:00/00:00:00:00:00/40 Emask 0x9 (media error)
+[  312.450130] ata1.00: status: { DRDY ERR }
+[  312.450134] ata1.00: error: { UNC }
+[  312.482015] ata1.00: configured for UDMA/133
+[  312.482022] sd 0:0:0:0: [sda] tag#0 FAILED Result: hostbyte=DID_OK driverbyte=DRIVER_OK cmd_age=0s
+[  312.482027] sd 0:0:0:0: [sda] tag#0 Sense Key : Medium Error [current] 
+[  312.482031] sd 0:0:0:0: [sda] tag#0 Add. Sense: Unrecovered read error - auto reallocate failed
+[  312.482036] sd 0:0:0:0: [sda] tag#0 CDB: Read(10) 28 00 00 00 10 00 00 00 08 00
+[  312.482040] blk_update_request: I/O error, dev sda, sector 4096 op 0x0:(READ) flags 0x80700 phys_seg 1 prio class 2
+[  312.482048] Buffer I/O error on dev sda, logical block 512, async page read

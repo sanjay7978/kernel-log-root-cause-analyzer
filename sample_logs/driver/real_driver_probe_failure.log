@@ -1,0 +1,12 @@
+[    4.102310] iwlwifi 0000:00:14.3: enabling device (0000 -> 0002)
+[    4.104512] iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-77.ucode failed with error -2
+[    4.104540] iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-76.ucode failed with error -2
+[    4.104565] iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-75.ucode failed with error -2
+[    4.104590] iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-74.ucode failed with error -2
+[    4.104615] iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-73.ucode failed with error -2
+[    4.104640] iwlwifi 0000:00:14.3: Direct firmware load for iwlwifi-QuZ-a0-hr-b0-72.ucode failed with error -2
+[    4.104670] iwlwifi 0000:00:14.3: minimum version required: iwlwifi-QuZ-a0-hr-b0-39
+[    4.104675] iwlwifi 0000:00:14.3: maximum version supported: iwlwifi-QuZ-a0-hr-b0-77
+[    4.104680] iwlwifi 0000:00:14.3: no suitable firmware found!
+[    4.104685] iwlwifi 0000:00:14.3: minimum firmware debug requested
+[    4.104710] iwlwifi: probe of 0000:00:14.3 failed with error -2
