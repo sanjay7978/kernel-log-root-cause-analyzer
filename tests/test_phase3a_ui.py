@@ -240,6 +240,21 @@ def test_load_sample_log_content():
         load_sample_log_content("nonexistent", "missing.log")
 
 
+def test_load_all_subsystem_sample_logs():
+    """Verify that all 9 subsystem sample logs exist, load cleanly, and integrate with UI."""
+    assert len(gradio_app.SAMPLE_LOG_CHOICES) == 9
+    for label, (cat, fname) in gradio_app.SAMPLE_LOG_CHOICES.items():
+        content = load_sample_log_content(cat, fname)
+        assert len(content.strip()) > 0
+        file_input, pasted_text, status_msg = gradio_app.load_sample_by_choice(label)
+        assert file_input is None
+        assert pasted_text == content
+        assert f"sample_logs/{cat}/{fname}" in status_msg
+
+    # Test invalid choice returns gr.update()
+    assert gradio_app.load_sample_by_choice("Invalid Choice")[2] == ""
+
+
 # ============================================================
 # 6. Gradio Blocks UI Construction Test
 # ============================================================

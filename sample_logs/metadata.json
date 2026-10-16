@@ -1,9 +1,51 @@
 [
   {
+    "filename": "sample_logs/acpi/real_acpi_bios_error.log",
+    "category": "acpi",
+    "source": "Linux dmesg ACPI subsystem bug report",
+    "description": "Real ACPI BIOS AML namespace lookup failure (AE_NOT_FOUND, AE_ALREADY_EXISTS) during PCIe power management method evaluation."
+  },
+  {
+    "filename": "sample_logs/driver/real_driver_probe_failure.log",
+    "category": "driver",
+    "source": "Intel iwlwifi wireless driver dmesg log",
+    "description": "Real driver probe failure caused by missing wireless ucode firmware binaries in /lib/firmware (error -2 ENOENT)."
+  },
+  {
+    "filename": "sample_logs/filesystem/real_ext4_corruption.log",
+    "category": "filesystem",
+    "source": "Linux EXT4 filesystem corruption incident",
+    "description": "Real EXT4 filesystem metadata inconsistency referencing deleted inode, resulting in aborted journal and emergency read-only remount."
+  },
+  {
+    "filename": "sample_logs/gpu/real_amdgpu_ring_timeout.log",
+    "category": "gpu",
+    "source": "Linux DRM / AMDGPU graphics driver dmesg log",
+    "description": "Real GPU ring gfx execution timeout and hardware hang under compute workload, triggering BACO reset and VRAM recovery."
+  },
+  {
     "filename": "sample_logs/memory/real_oom_incident.log",
     "category": "memory",
     "source": "Ubuntu 22.04 LTS Kernel 6.5 (stress-ng memory exhaustion test)",
     "description": "Real Linux kernel out-of-memory event with stack trace, node memory info, process table dump, and OOM killer invocation terminating stress-ng-vm."
+  },
+  {
+    "filename": "sample_logs/network/real_netdev_watchdog_tx_timeout.log",
+    "category": "network",
+    "source": "Linux e1000e network driver dmesg trace",
+    "description": "Real network interface transmit queue timeout detected by NETDEV WATCHDOG with timer softirq warning trace, adapter reset, and link down."
+  },
+  {
+    "filename": "sample_logs/panic/real_kernel_panic_null_deref.log",
+    "category": "panic",
+    "source": "Linux kernel panic incident dmesg dump",
+    "description": "Real fatal kernel panic triggered by a supervisor kernel-mode NULL pointer dereference (#PF page fault, Oops, Call Trace, not syncing)."
+  },
+  {
+    "filename": "sample_logs/storage/real_ata_io_error.log",
+    "category": "storage",
+    "source": "Linux libata / SCSI subsystem disk error log",
+    "description": "Real SATA hard drive uncorrectable read error (UNC) resulting in NCQ freeze, SCSI medium error, and block layer buffer I/O failure."
   },
   {
     "filename": "sample_logs/usb/real_usb_descriptor_error.log",

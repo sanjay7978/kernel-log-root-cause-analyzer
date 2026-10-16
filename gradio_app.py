@@ -138,6 +138,19 @@ CUSTOM_CSS = """
 """
 
 
+SAMPLE_LOG_CHOICES = {
+    "Memory: OOM Killer (stress-ng)": ("memory", "real_oom_incident.log"),
+    "USB: Device Descriptor Timeout (-110)": ("usb", "real_usb_descriptor_error.log"),
+    "Filesystem: EXT4 Metadata Corruption (Read-Only)": ("filesystem", "real_ext4_corruption.log"),
+    "Storage: SATA / ATA Read I/O Media Error (UNC)": ("storage", "real_ata_io_error.log"),
+    "Network: NETDEV Watchdog Transmit Queue Timeout": ("network", "real_netdev_watchdog_tx_timeout.log"),
+    "GPU: AMDGPU Ring Timeout & Reset Recovery": ("gpu", "real_amdgpu_ring_timeout.log"),
+    "Driver: Intel iwlwifi Missing Firmware Probe Failure": ("driver", "real_driver_probe_failure.log"),
+    "Panic: Fatal Kernel NULL Pointer Dereference (#PF)": ("panic", "real_kernel_panic_null_deref.log"),
+    "ACPI: BIOS AML Namespace Lookup Error (AE_NOT_FOUND)": ("acpi", "real_acpi_bios_error.log"),
+}
+
+
 def load_oom_example():
     """Helper to populate pasted text box with authentic OOM sample log."""
     try:
@@ -152,6 +165,18 @@ def load_usb_example():
     try:
         content = load_sample_log_content("usb", "real_usb_descriptor_error.log")
         return None, content, "Loaded real USB descriptor timeout incident from sample_logs/usb/real_usb_descriptor_error.log"
+    except Exception as exc:
+        return None, "", f"Failed to load sample: {exc}"
+
+
+def load_sample_by_choice(choice: str):
+    """Helper to populate pasted text box from chosen sample log."""
+    if not choice or choice not in SAMPLE_LOG_CHOICES:
+        return None, gr.update(), ""
+    cat, filename = SAMPLE_LOG_CHOICES[choice]
+    try:
+        content = load_sample_log_content(cat, filename)
+        return None, content, f"Loaded real {choice} incident from sample_logs/{cat}/{filename}"
     except Exception as exc:
         return None, "", f"Failed to load sample: {exc}"
 
@@ -261,6 +286,13 @@ def create_ui():
                 with gr.Row():
                     load_oom_btn = gr.Button("📂 Load Real Memory OOM Log", size="sm")
                     load_usb_btn = gr.Button("📂 Load Real USB Timeout Log", size="sm")
+                with gr.Row():
+                    sample_dropdown = gr.Dropdown(
+                        choices=["-- Select a sample log to load --"] + list(SAMPLE_LOG_CHOICES.keys()),
+                        value="-- Select a sample log to load --",
+                        label="⚡ Or Select from All 9 Real Subsystem Incidents",
+                        interactive=True,
+                    )
 
             # Status and Architecture Notes Column
             with gr.Column(scale=3):
@@ -411,6 +443,12 @@ def create_ui():
         load_usb_btn.click(
             fn=load_usb_example,
             inputs=[],
+            outputs=[log_file_input, pasted_log_input, status_feedback],
+        )
+
+        sample_dropdown.change(
+            fn=load_sample_by_choice,
+            inputs=[sample_dropdown],
             outputs=[log_file_input, pasted_log_input, status_feedback],
         )
 

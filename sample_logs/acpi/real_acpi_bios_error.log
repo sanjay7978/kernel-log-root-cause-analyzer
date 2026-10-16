@@ -1,0 +1,13 @@
+[    0.184321] ACPI: Added _OSI(Module Device)
+[    0.184325] ACPI: Added _OSI(Processor Device)
+[    0.184328] ACPI: Added _OSI(3.0 _SCP Extensions)
+[    0.184332] ACPI: Added _OSI(Processor Aggregator Device)
+[    0.210415] ACPI: [Firmware Bug]: BIOS _OSI(Linux) query ignored
+[    0.224102] ACPI BIOS Error (bug): Could not resolve symbol [\_SB.PCI0.PEG0.PEGP], AE_NOT_FOUND (20221020/dswload2-162)
+[    0.224115] ACPI Error: AE_NOT_FOUND, During name lookup/catalog (20221020/psobject-220)
+[    0.224122] ACPI BIOS Error (bug): Failure creating named object [\_SB.PCI0.PEG0.PEGP._ON], AE_ALREADY_EXISTS (20221020/dswload2-326)
+[    0.224130] ACPI Error: AE_ALREADY_EXISTS, During name lookup/catalog (20221020/psobject-220)
+[    0.224137] ACPI BIOS Error (bug): Could not resolve symbol [\_SB.PCI0.PEG0.PEGP._OFF], AE_NOT_FOUND (20221020/psargs-330)
+[    0.224143] ACPI Error: Aborting method \_SB.PCI0.PEG0.PEGP._OFF due to previous error (AE_NOT_FOUND) (20221020/psparse-529)
+[    0.224151] ACPI: \_SB_.PCI0.PEG0: [Firmware Bug]: Disable ASPM L1
+[    0.245012] ACPI: 10 ACPI AML tables successfully acquired and loaded

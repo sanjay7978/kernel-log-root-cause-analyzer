@@ -1,0 +1,39 @@
+[   68.214051] BUG: kernel NULL pointer dereference, address: 0000000000000028
+[   68.214059] #PF: supervisor read access in kernel mode
+[   68.214063] #PF: error_code(0x0000) - not-present page
+[   68.214067] PGD 0 P4D 0 
+[   68.214071] Oops: 0000 [#1] PREEMPT SMP NOPTI
+[   68.214076] CPU: 3 PID: 1845 Comm: custom_driver Not tainted 6.5.0-28-generic #29~22.04.1-Ubuntu
+[   68.214081] Hardware name: Dell Inc. PowerEdge R630, BIOS 2.12.1 07/12/2021
+[   68.214084] RIP: 0010:custom_driver_process+0x18/0x50 [custom_driver]
+[   68.214092] Code: 48 89 e5 48 83 ec 10 48 85 ff 74 2b 48 8b 47 28 48 85 c0 74 22
+[   68.214096] RSP: 0018:ffffa46c029dfc88 EFLAGS: 00010286
+[   68.214100] RAX: 0000000000000000 RBX: ffff92408c115000 RCX: 0000000000000000
+[   68.214103] RDX: 0000000000000001 RSI: ffff92408c115000 RDI: 0000000000000000
+[   68.214106] RBP: ffffa46c029dfc98 R08: 0000000000000001 R09: 0000000000000000
+[   68.214109] R10: ffff924080000000 R11: 0000000000000000 R12: 0000000000000000
+[   68.214112] R13: 0000000000000000 R14: 0000000000000000 R15: 0000000000000000
+[   68.214115] FS:  00007fc128509740(0000) GS:ffff9247bfcc0000(0000) knlGS:0000000000000000
+[   68.214119] CS:  0010 DS: 0000 ES: 0000 CR0: 0000000080050033
+[   68.214122] CR2: 0000000000000028 CR3: 000000010cb7c004 CR4: 00000000003706e0
+[   68.214126] Call Trace:
+[   68.214128]  <TASK>
+[   68.214131]  ? show_regs+0x6d/0x80
+[   68.214137]  ? __die+0x24/0x70
+[   68.214142]  ? page_fault_oops+0x99/0x1b0
+[   68.214148]  ? do_user_addr_fault+0x310/0x680
+[   68.214153]  ? exc_page_fault+0x7c/0x180
+[   68.214159]  ? asm_exc_page_fault+0x26/0x30
+[   68.214165]  ? custom_driver_process+0x18/0x50 [custom_driver]
+[   68.214171]  driver_write+0x42/0x70 [custom_driver]
+[   68.214177]  vfs_write+0xc9/0x410
+[   68.214183]  ksys_write+0x6f/0xf0
+[   68.214188]  do_syscall_64+0x5c/0x90
+[   68.214193]  entry_SYSCALL_64_after_hwframe+0x6e/0xd8
+[   68.214199]  </TASK>
+[   68.214220] CR2: 0000000000000028
+[   68.214224] ---[ end trace 0000000000000000 ]---
+[   68.214228] RIP: 0010:custom_driver_process+0x18/0x50 [custom_driver]
+[   68.214250] Kernel panic - not syncing: Fatal exception
+[   68.214255] Kernel Offset: 0x1f000000 from 0xffffffff81000000
+[   68.214260] ---[ end Kernel panic - not syncing: Fatal exception ]---

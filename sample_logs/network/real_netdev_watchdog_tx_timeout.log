@@ -1,0 +1,20 @@
+[ 1420.890123] ------------[ cut here ]------------
+[ 1420.890128] NETDEV WATCHDOG: eth0 (e1000e): transmit queue 0 timed out
+[ 1420.890135] WARNING: CPU: 1 PID: 0 at net/sched/sch_generic.c:525 dev_watchdog+0x235/0x240
+[ 1420.890141] Modules linked in: e1000e intel_rapl_msr intel_rapl_common
+[ 1420.890148] CPU: 1 PID: 0 Comm: swapper/1 Not tainted 6.5.0-28-generic #29~22.04.1-Ubuntu
+[ 1420.890152] Hardware name: Dell Inc. PowerEdge R630, BIOS 2.12.1 07/12/2021
+[ 1420.890155] RIP: 0010:dev_watchdog+0x235/0x240
+[ 1420.890160] Call Trace:
+[ 1420.890162]  <IRQ>
+[ 1420.890165]  ? dev_watchdog+0x235/0x240
+[ 1420.890170]  call_timer_fn+0x29/0x130
+[ 1420.890175]  __run_timers.part.0+0x1df/0x290
+[ 1420.890181]  run_timer_softirq+0x3a/0x70
+[ 1420.890186]  __do_softirq+0xd1/0x2c8
+[ 1420.890192]  irq_exit_rcu+0x89/0xb0
+[ 1420.890197]  sysvec_apic_timer_interrupt+0x6e/0x90
+[ 1420.890202]  </IRQ>
+[ 1420.890205] ---[ end trace 0000000000000000 ]---
+[ 1420.890210] e1000e 0000:00:1f.6 eth0: Reset adapter unexpectedly
+[ 1422.340112] e1000e 0000:00:1f.6 eth0: NIC Link is Down
