@@ -16,10 +16,12 @@ Keeps all business logic out of gradio_app.py so it can be tested without a brow
 import html
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from config import MAX_LOG_FILE_SIZE_BYTES, OLLAMA_MODEL, SAMPLE_LOGS_DIR
 from modules.analyzer import PipelineExecutionResult, analyze_raw_content
+from modules.answer_checks import locate_evidence
+from modules.event_extractor import EventSummary
 from modules.llm_analyzer import (
     OllamaClient,
     OllamaConnectionError,
@@ -33,11 +35,19 @@ from modules.log_loader import (
     LogFileTooLargeError,
     load_log_file,
 )
+from modules.report_export import to_json, to_markdown
 from modules.result_parser import MalformedJSONError, ValidationError
 
 logger = logging.getLogger("kernel_log_analyzer.ui_service")
 
 SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+
+# Most rows the timeline and the log viewer will draw, so the page stays light on long logs
+MAX_TIMELINE_ROWS = 30
+MAX_VIEWER_LINES = 400
+
+# What every analysis returns: (report_html, cleaned_log_text, markdown_report, json_report)
+Outcome = Tuple[str, str, str, str]
 
 
 # ----------------------------------------------------------------------------
@@ -61,25 +71,33 @@ def format_confidence_badge(confidence: str) -> str:
     return f'<span class="kx-chip kx-conf"><span class="kx-k">confidence</span>{html.escape(confidence or "n/a")}</span>'
 
 
-def format_evidence_list(evidence_items: List[str], unverified: Optional[List[str]] = None) -> str:
+def format_evidence_list(
+    evidence_items: List[str],
+    unverified: Optional[List[str]] = None,
+    lines: Optional[Dict[str, int]] = None,
+) -> str:
     """
     Quoted log lines, shown like a log viewer with a line gutter.
 
     Lines in `unverified` could not be found in the log and are marked in amber.
+    `lines` maps a quote to its line number in the log viewer; those rows link to it.
     """
     if not evidence_items:
         return '<p class="kx-empty">No direct log line citations extracted.</p>'
     not_found = set(unverified or [])
+    where = lines or {}
     rows = []
     for number, item in enumerate(evidence_items, start=1):
         missing = item in not_found
         note = (
             '<span class="kx-note">Not found in the log. The model may have misquoted or invented this line.</span>'
         ) if missing else ""
+        line_no = where.get(item)
+        jump = f'<a class="kx-jump" href="#kx-L{line_no}" title="Show this line in the log">line {line_no}</a>' if line_no else ""
         rows.append(
             f'<div class="kx-row{" kx-warn" if missing else ""}">'
             f'<span class="kx-ln">{number}</span>'
-            f'<span class="kx-body"><code>{html.escape(item.strip())}</code>{note}</span></div>'
+            f'<span class="kx-body"><code>{html.escape(item.strip())}</code>{note}</span>{jump}</div>'
         )
     return f'<div class="kx-log">{"".join(rows)}</div>'
 
@@ -129,6 +147,60 @@ def _section(title: str, body: str) -> str:
 def _text_block(text: str, empty: str = "None given.") -> str:
     text = (text or "").strip()
     return f'<p class="kx-text">{html.escape(text)}</p>' if text else f'<p class="kx-empty">{empty}</p>'
+
+
+def _when(seconds: Optional[float]) -> str:
+    return f"{seconds:.2f} s" if seconds is not None else ""
+
+
+def render_timeline(summary: Optional[EventSummary], viewable_lines: int = MAX_VIEWER_LINES) -> str:
+    """What happened, in order: one row per burst of events, each linking to its line in the log viewer."""
+    if summary is None or not summary.groups:
+        return '<p class="kx-empty">No warnings or errors were found to build a timeline from.</p>'
+    counts = " &middot; ".join(f"{html.escape(name)} {count}" for name, count in summary.subsystem_counts.items())
+    facts = [f"{summary.total_events} events", counts]
+    if summary.first_event_time is not None:
+        facts.append(f"first at {summary.first_event_time:g} s")
+    if summary.span_seconds:
+        facts.append(f"spans {summary.span_seconds:g} s")
+    rows = []
+    for group in summary.groups[:MAX_TIMELINE_ROWS]:
+        times = _when(group.first_time)
+        repeat = f'<span class="kx-n">&times;{group.count}</span>' if group.count > 1 else '<span class="kx-n"></span>'
+        inner = (
+            f'<span class="kx-t">{times or f"line {group.first_line}"}</span>'
+            f'<span class="kx-sys">{html.escape(group.subsystem)}</span>'
+            f'<span class="kx-et">{html.escape(group.text)}</span>{repeat}'
+        )
+        if group.first_line <= viewable_lines:
+            rows.append(f'<a class="kx-ev" href="#kx-L{group.first_line}">{inner}</a>')
+        else:
+            rows.append(f'<div class="kx-ev">{inner}</div>')
+    more = len(summary.groups) - MAX_TIMELINE_ROWS
+    tail = f'<p class="kx-empty">and {more} more entries</p>' if more > 0 else ""
+    return f'<p class="kx-sum">{" &middot; ".join(facts)}</p><div class="kx-tl">{"".join(rows)}</div>{tail}'
+
+
+def render_log_viewer(log_text: str, hit_lines: Optional[Set[int]] = None) -> str:
+    """
+    The log the model saw, numbered, with the lines it quoted highlighted.
+
+    One element per line (the number comes from CSS), so even a long log stays light.
+    """
+    hits = hit_lines or set()
+    all_lines = log_text.splitlines()
+    rows = []
+    for number, line in enumerate(all_lines[:MAX_VIEWER_LINES], start=1):
+        classes = ["kx-vl"]
+        if number in hits:
+            classes.append("kx-hit")
+        if line.lstrip().startswith("[..."):
+            classes.append("kx-gap")
+        ident = f' id="kx-L{number}"'
+        rows.append(f'<span class="{" ".join(classes)}"{ident} data-n="{number}">{html.escape(line)}\n</span>')
+    cut = len(all_lines) - MAX_VIEWER_LINES
+    tail = f'<p class="kx-empty">and {cut} more lines (use the Log sent to the model box)</p>' if cut > 0 else ""
+    return f'<pre class="kx-view" tabindex="0">{"".join(rows)}</pre>{tail}'
 
 
 # ----------------------------------------------------------------------------
@@ -246,15 +318,23 @@ def render_report(result: PipelineExecutionResult, source_label: str, live: bool
         f'<div class="kx-meta">{html.escape(source_label)} &middot; {html.escape(result.model_name)} &middot; {seconds:.0f} s</div>'
         f'</section>'
     )
+    log_text = result.cleaned_log_excerpt
+    where = locate_evidence(a.evidence, log_text)
+    timeline_note = (
+        '<p class="kx-empty">The timeline covers the lines that were sent to the model.</p>'
+        if result.context_truncated else ""
+    )
     return (
         '<div class="kx-report">'
         + _warning_banner(result)
         + head
-        + _section("Evidence from the log", format_evidence_list(a.evidence, a.unverified_evidence))
+        + _section("What happened, in order", render_timeline(result.timeline) + timeline_note)
+        + _section("Evidence from the log", format_evidence_list(a.evidence, a.unverified_evidence, where))
         + _section("Explanation", _text_block(a.explanation))
         + _section("What the log does not show", _text_block(a.uncertainty))
         + _section("Commands to investigate", format_commands_list(a.commands, a.command_warnings))
         + _section("Possible fixes", format_fixes_list(a.possible_fixes))
+        + _section("The log the model saw", render_log_viewer(log_text, set(where.values())))
         + _metrics(result, live)
         + "</div>"
     )
@@ -340,15 +420,25 @@ def _pipeline_error_card(exc: Exception, model: Optional[str]) -> str:
 
 
 # ----------------------------------------------------------------------------
-# Controllers: each returns (report_html, cleaned_log_text)
+# Controllers: each returns (report_html, cleaned_log_text, markdown_report, json_report)
 # ----------------------------------------------------------------------------
+
+def _outcome(result: PipelineExecutionResult, source_label: str, live: bool = False) -> Outcome:
+    """The page, the cleaned log and the two downloadable reports for one finished analysis."""
+    return (
+        render_report(result, source_label, live=live),
+        result.cleaned_log_excerpt,
+        to_markdown(result, source_label),
+        to_json(result, source_label),
+    )
+
 
 def analyze_prepared(
     raw_content: str,
     source_label: str,
     model_override: Optional[str] = None,
     ollama_client: Optional[OllamaClient] = None,
-) -> Tuple[str, str]:
+) -> Outcome:
     """Run the pipeline on log text that has already been read."""
     try:
         result = analyze_raw_content(
@@ -358,8 +448,8 @@ def analyze_prepared(
             ollama_client=ollama_client,
         )
     except Exception as exc:  # noqa: BLE001
-        return _pipeline_error_card(exc, model_override), ""
-    return render_report(result, source_label), result.cleaned_log_excerpt
+        return _pipeline_error_card(exc, model_override), "", "", ""
+    return _outcome(result, source_label)
 
 
 def run_ui_analysis(
@@ -367,11 +457,11 @@ def run_ui_analysis(
     pasted_text: Optional[str],
     model_override: Optional[str] = None,
     ollama_client: Optional[OllamaClient] = None,
-) -> Tuple[str, str]:
-    """Upload or pasted text in; (report_html, cleaned_log_text) out."""
+) -> Outcome:
+    """Upload or pasted text in; an Outcome (report_html, cleaned_log_text, markdown, json) out."""
     raw, label, error = read_input(uploaded_file, pasted_text)
     if error:
-        return error, ""
+        return error, "", "", ""
     return analyze_prepared(raw, label, model_override, ollama_client)
 
 
@@ -381,8 +471,8 @@ def run_live_ui_analysis(
     lines: int = 1000,
     model_override: Optional[str] = None,
     ollama_client: Optional[OllamaClient] = None,
-) -> Tuple[str, str]:
-    """Capture the live kernel log and analyse it; returns (report_html, cleaned_log_text)."""
+) -> Outcome:
+    """Capture the live kernel log and analyse it; returns an Outcome (see the top of this module)."""
     from modules.analyzer import analyze_live
     from modules.live_collector import (
         CollectionExecutionError,
@@ -401,19 +491,19 @@ def run_live_ui_analysis(
         )
     except PlatformNotSupportedError as err:
         return format_error_html("Live capture is not available here", str(err),
-                                 "Run the app on a Linux machine, or use stored logs in the Upload and Paste tabs."), ""
+                                 "Run the app on a Linux machine, or use stored logs in the Upload and Paste tabs."), "", "", ""
     except PermissionDeniedError as err:
         return format_error_html("Permission denied reading the kernel log", str(err),
-                                 "Run with sudo, grant CAP_SYSLOG, or relax kernel.dmesg_restrict."), ""
+                                 "Run with sudo, grant CAP_SYSLOG, or relax kernel.dmesg_restrict."), "", "", ""
     except CollectorNotFoundError as err:
         return format_error_html("Collector not found", str(err),
-                                 "Install util-linux (for dmesg) or systemd (for journalctl)."), ""
+                                 "Install util-linux (for dmesg) or systemd (for journalctl)."), "", "", ""
     except CollectionExecutionError as err:
-        return format_error_html("Live capture failed", str(err), "Check that the kernel ring buffer has content."), ""
+        return format_error_html("Live capture failed", str(err), "Check that the kernel ring buffer has content."), "", "", ""
     except Exception as exc:  # noqa: BLE001
-        return _pipeline_error_card(exc, model_override), ""
+        return _pipeline_error_card(exc, model_override), "", "", ""
 
-    return render_report(result, result.log_file_path or "Live Linux capture", live=True), result.cleaned_log_excerpt
+    return _outcome(result, result.log_file_path or "Live Linux capture", live=True)
 
 
 def load_sample_log_content(category: str, filename: str) -> str:

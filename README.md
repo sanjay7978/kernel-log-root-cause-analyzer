@@ -71,6 +71,8 @@ kernel_log_root_cause_analyzer/
 │   ├── result_parser.py     # JSON extraction, schema validation, and fallback parsing
 │   ├── live_collector.py    # Safe Linux live kernel log capture (dmesg, journalctl, capability detection)
 │   ├── analyzer.py          # Unified orchestration service for in-memory, file, and live inputs
+│   ├── event_extractor.py   # Subsystem tags and the event timeline
+│   ├── report_export.py     # Markdown / JSON report files
 │   ├── ui_service.py        # UI controller logic and report rendering (one HTML block)
 │   └── ui_theme.py          # Dark console theme: palette, CSS, Gradio theme
 │
@@ -197,11 +199,13 @@ A dark, console-style workbench with the log going in on the left and the report
 **Report** (one block, updated in a single step)
 * Pressing **Analyse** shows an "Analysing" state at once, then the report. The local model usually needs about a minute.
 * **Probable root cause** as the headline, with chips for subsystem, severity (always shown as a word, not only a colour) and the model's own confidence.
-* **Evidence from the log:** the quoted lines, numbered like a log viewer. A line the model quoted that is not in your log is marked in amber: *Not found in the log*.
+* **What happened, in order:** a timeline built from the log itself (`modules/event_extractor.py`). Every line is tagged with the subsystem it names (usb, storage, filesystem, memory, network, gpu, acpi, driver, panic), warnings and state changes are picked out, and consecutive identical events become one entry with a count (`x4`). It is a reading aid: the tags are a heuristic and the model never sees them. Click a row to jump to that line in the log viewer.
+* **Evidence from the log:** the quoted lines, numbered like a log viewer. Each has a **line N** button that jumps to the line in **The log the model saw**, where the quoted lines are highlighted. A line the model quoted that is not in your log is marked in amber: *Not found in the log*.
 * **Explanation** and **What the log does not show** (the model's uncertainty).
 * **Commands to investigate:** click one to select it for copying. Commands that could change the system, or that are not on the list of known read-only tools, are marked *Review before running* with the reason. Commands are never run by the tool.
-* **Possible fixes**, and a collapsed **Pipeline details** (line counts, tokens, timings). A warning banner appears when a long log had to be cut to fit the model.
-* **Log sent to the model:** the exact cleaned text, in a collapsed box under the report.
+* **Possible fixes**, **The log the model saw** (numbered, evidence highlighted), and a collapsed **Pipeline details** (line counts, tokens, timings). A warning banner appears when a long log had to be cut to fit the model; the timeline and the viewer then cover the lines that were sent.
+* **Download report (.md)** and **Download data (.json)** buttons appear under the report. The Markdown file is a readable report (root cause, timeline, evidence, commands, fixes, pipeline details); the JSON has the same content as data. Both say the diagnosis is a probable cause from a local model and mark flagged evidence and commands. Only the latest 10 reports are kept in the temporary folder.
+* **Log sent to the model:** the exact cleaned text, in a collapsed box under the report, for copying.
 
 **Light and private by design:** the styling is plain CSS in `modules/ui_theme.py`, with no web fonts, no CDN and no scripts, and Gradio's usage analytics and online version check are switched off. The page makes no requests to anything but the local app.
 

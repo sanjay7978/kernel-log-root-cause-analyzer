@@ -9,6 +9,7 @@ Comprehensive unit and integration tests for Phase 3A:
 """
 
 from pathlib import Path
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,6 +20,7 @@ from modules.analyzer import analyze_log, analyze_raw_content
 from modules.llm_analyzer import LLMResponse, OllamaClient, OllamaConnectionError
 from modules.log_loader import LogFileEmptyError, LogFileTooLargeError
 from modules.analyzer import PipelineExecutionResult
+from modules.event_extractor import summarise_events
 from modules.preprocessor import PreprocessingStats
 from modules.result_parser import DiagnosticAnalysis
 from modules.ui_service import (
@@ -35,7 +37,9 @@ from modules.ui_service import (
     render_analysing,
     render_empty_state,
     render_header,
+    render_log_viewer,
     render_report,
+    render_timeline,
     run_ui_analysis,
 )
 from modules.ui_theme import CSS, build_theme
@@ -134,7 +138,7 @@ def test_extract_input_content_no_input_raises_value_error():
 
 def test_run_ui_analysis_with_pasted_log(mock_ollama_client):
     pasted = "[ 120.450123] stress-ng invoked oom-killer: gfp_mask=0x1100cca\n"
-    report_html, cleaned_log = run_ui_analysis(
+    report_html, cleaned_log, markdown, json_text = run_ui_analysis(
         uploaded_file=None,
         pasted_text=pasted,
         ollama_client=mock_ollama_client,
@@ -147,13 +151,15 @@ def test_run_ui_analysis_with_pasted_log(mock_ollama_client):
     assert "Add swap space" in report_html       # fixes
     assert "raw lines" in report_html            # pipeline details
     assert "stress-ng invoked oom-killer" in cleaned_log
+    assert markdown.startswith("# Kernel log analysis report") and "Process stress-ng exhausted" in markdown
+    assert json.loads(json_text)["analysis"]["subsystem"] == "memory"
 
 
 def test_run_ui_analysis_with_uploaded_file(mock_ollama_client, tmp_path: Path):
     log_file = tmp_path / "system_oom.log"
     log_file.write_text("[ 120.450123] stress-ng invoked oom-killer: gfp_mask=0x1100cca\n", encoding="utf-8")
 
-    report_html, cleaned_log = run_ui_analysis(
+    report_html, cleaned_log, markdown, json_text = run_ui_analysis(
         uploaded_file=str(log_file),
         pasted_text=None,
         ollama_client=mock_ollama_client,
@@ -165,17 +171,17 @@ def test_run_ui_analysis_with_uploaded_file(mock_ollama_client, tmp_path: Path):
 
 
 def test_run_ui_analysis_no_input_returns_friendly_error():
-    report_html, cleaned_log = run_ui_analysis(uploaded_file=None, pasted_text="")
+    report_html, cleaned_log, markdown, json_text = run_ui_analysis(uploaded_file=None, pasted_text="")
     assert "No input provided" in report_html
     assert "drop a .log or .txt file" in report_html
-    assert cleaned_log == ""
+    assert (cleaned_log, markdown, json_text) == ("", "", "")
 
 
 def test_run_ui_analysis_empty_file_returns_error(tmp_path: Path):
     empty_file = tmp_path / "zero_byte.log"
     empty_file.touch()
 
-    report_html, _ = run_ui_analysis(uploaded_file=str(empty_file), pasted_text="")
+    report_html, *_ = run_ui_analysis(uploaded_file=str(empty_file), pasted_text="")
     assert "The log is empty" in report_html
 
 
@@ -183,7 +189,7 @@ def test_run_ui_analysis_ollama_unreachable_returns_friendly_error():
     mock_client = MagicMock(spec=OllamaClient)
     mock_client.generate.side_effect = OllamaConnectionError("Connection refused to 127.0.0.1:11434")
 
-    report_html, _ = run_ui_analysis(
+    report_html, *_ = run_ui_analysis(
         uploaded_file=None,
         pasted_text="[ 0.1] kernel sample line\n",
         ollama_client=mock_client,
@@ -333,12 +339,80 @@ def test_page_states_empty_analysing_and_header():
     assert "checking ollama" in render_header("qwen3:8b", None)
 
 
+LOG_TEXT = (
+    "[   50.218542] usb 1-1: device descriptor read/64, error -110\n"
+    "    [... preceding message repeated 3 times, last at [   50.926040] ...]\n"
+    "[   57.950201] usb 1-1: unable to enumerate USB device\n"
+)
+
+
+def test_timeline_rows_show_time_subsystem_text_count_and_link_to_the_log_line():
+    html_out = render_timeline(summarise_events(LOG_TEXT))
+
+    assert "5 events" in html_out and "usb 5" in html_out      # 4 timeouts (3 collapsed) plus the final failure
+    assert 'href="#kx-L1"' in html_out and 'href="#kx-L3"' in html_out
+    assert "50.22 s" in html_out and "&times;4" in html_out
+    assert html_out.count('class="kx-sys">usb<') == 2
+
+
+def test_timeline_for_a_log_with_no_events_and_for_none():
+    assert "No warnings or errors" in render_timeline(summarise_events("[ 1.0] Linux version 6.5.0\n"))
+    assert "No warnings or errors" in render_timeline(None)
+
+
+def test_timeline_is_capped_and_says_how_many_entries_were_left_out():
+    log = "".join(f"[ {i}.0] usb 1-1: failed step number {chr(65 + i % 26)}{'x' * (i % 7)}{i * 11}\n" for i in range(60))
+    html_out = render_timeline(summarise_events(log))
+
+    assert html_out.count('class="kx-ev"') == 30
+    assert "and 30 more entries" in html_out
+
+
+def test_log_viewer_numbers_every_line_highlights_hits_and_dims_gaps():
+    viewer = render_log_viewer("[ 1.0] a\n    [... 25 lines omitted ...]\n[ 2.0] b\n", {3})
+
+    assert 'id="kx-L1"' in viewer and 'id="kx-L3"' in viewer and 'data-n="2"' in viewer
+    assert viewer.count("kx-hit") == 1 and 'class="kx-vl kx-hit" id="kx-L3"' in viewer
+    assert viewer.count("kx-gap") == 1
+    assert viewer.count("<span") == 3                       # one element per line keeps the page light
+
+
+def test_log_viewer_escapes_the_log_and_stops_at_the_line_cap():
+    assert "<script>" not in render_log_viewer("<script>alert(1)</script>\n")
+    big = render_log_viewer("".join(f"line {i}\n" for i in range(450)))
+    assert 'id="kx-L400"' in big and 'id="kx-L401"' not in big and "and 50 more lines" in big
+
+
+def test_evidence_rows_link_to_their_line_in_the_viewer():
+    html_out = format_evidence_list(["found", "missing"], ["missing"], {"found": 7})
+
+    assert html_out.count("kx-jump") == 1 and 'href="#kx-L7"' in html_out and ">line 7<" in html_out
+
+
+def test_report_ties_timeline_evidence_and_viewer_together():
+    result = _result(cleaned_log_excerpt=LOG_TEXT, timeline=summarise_events(LOG_TEXT))
+    result.analysis.evidence = ["usb 1-1: unable to enumerate USB device"]
+
+    html_out = render_report(result, "Pasted Log Text")
+    assert "What happened, in order" in html_out and "The log the model saw" in html_out
+    assert 'href="#kx-L3"' in html_out                       # the evidence row jumps to line 3
+    assert 'class="kx-vl kx-hit" id="kx-L3"' in html_out     # and line 3 is highlighted in the viewer
+    assert html_out.index("What happened") < html_out.index("Evidence from the log") < html_out.index("The log the model saw")
+
+
+def test_report_says_the_timeline_only_covers_the_lines_that_were_sent():
+    result = _result(cleaned_log_excerpt=LOG_TEXT, timeline=summarise_events(LOG_TEXT), context_truncated=True,
+                     original_cleaned_lines=900, sent_lines=100, omitted_lines=800)
+    assert "covers the lines that were sent" in render_report(result, "big.log")
+
+
 def test_clear_resets_every_wired_output():
     cleared = gradio_app.clear_inputs_and_outputs()
-    assert len(cleared) == 6
+    assert len(cleared) == 8
     assert cleared[0] is None and cleared[1] == "" and cleared[3] is None
     assert "press Analyse" in cleared[4]
     assert cleared[5] == ""
+    assert cleared[6].visible is False and cleared[7].visible is False   # the download buttons hide again
 
 
 # ============================================================

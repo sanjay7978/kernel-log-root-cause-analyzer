@@ -12,6 +12,7 @@ from modules.answer_checks import (
     check_commands,
     evidence_in_log,
     find_unverified_evidence,
+    locate_evidence,
 )
 from modules.llm_analyzer import LLMResponse, OllamaClient
 from modules.ui_service import format_commands_list, format_evidence_list
@@ -51,6 +52,25 @@ def test_find_unverified_evidence_returns_only_the_missing_lines():
     evidence = ["usb 1-1: unable to enumerate USB device", "kernel BUG at mm/slub.c:4012!"]
     assert find_unverified_evidence(evidence, LOG) == ["kernel BUG at mm/slub.c:4012!"]
     assert find_unverified_evidence([], LOG) == []
+
+
+def test_locate_evidence_gives_the_line_number_of_each_quote():
+    where = locate_evidence(
+        ["usb 1-1: unable to enumerate USB device",       # last line
+         "[  120.450255] Out of memory: Killed process",   # with its timestamp, first line
+         "usb 1-1: device not accepting address 4 ... error -71",   # shortened with ...
+         "kernel BUG at mm/slub.c:4012!"],                  # not in the log
+        LOG,
+    )
+    assert where == {
+        "usb 1-1: unable to enumerate USB device": 3,
+        "[  120.450255] Out of memory: Killed process": 1,
+        "usb 1-1: device not accepting address 4 ... error -71": 2,
+    }
+
+
+def test_locate_evidence_with_nothing_to_find():
+    assert locate_evidence([], LOG) == {} and locate_evidence(["x"], "") == {}
 
 
 # ---------------------------------------------------------------- commands

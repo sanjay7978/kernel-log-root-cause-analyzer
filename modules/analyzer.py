@@ -36,6 +36,7 @@ from config import (
 )
 from modules.answer_checks import check_commands, find_unverified_evidence
 from modules.context_budget import FitResult, fit_to_budget, log_char_budget
+from modules.event_extractor import EventSummary, summarise_events
 from modules.llm_analyzer import OllamaClient
 from modules.log_loader import (
     LogFileEmptyError,
@@ -65,6 +66,8 @@ class PipelineExecutionResult:
     omitted_lines: int = 0
     # True when Ollama itself cut the prompt (our estimate was too generous)
     ollama_truncated: bool = False
+    # What happened, in order: tagged events grouped into bursts (see modules/event_extractor.py)
+    timeline: Optional[EventSummary] = None
 
 
 _OMISSION_NOTE = (
@@ -160,6 +163,7 @@ def analyze_raw_content(
             "Log too long for the model context: sending %d of %d lines (%d omitted)",
             fit.kept_lines, fit.original_lines, fit.omitted_lines,
         )
+    timeline = summarise_events(fit.text)
     prompt = build_diagnostic_prompt(fit.text, context_notes=omission_note)
     timings["prompt_build_ms"] = round((time.perf_counter() - t2) * 1000, 2)
 
@@ -221,6 +225,7 @@ def analyze_raw_content(
         sent_lines=fit.kept_lines,
         omitted_lines=fit.omitted_lines,
         ollama_truncated=ollama_truncated,
+        timeline=timeline,
     )
 
 

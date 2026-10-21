@@ -211,6 +211,30 @@ footer, .built-with, .show-api { display: none !important; }
 .kx-metrics { display: grid; grid-template-columns: max-content 1fr; gap: 6px 22px; margin: 14px 0 0; font-family: var(--kx-mono); font-size: 12.5px; }
 .kx-metrics dt { color: var(--kx-muted); } .kx-metrics dd { margin: 0; color: var(--kx-text); }
 
+/* ---- timeline ---------------------------------------------------------- */
+.kx-sum { font-family: var(--kx-mono); font-size: 12px; color: var(--kx-muted); margin: 0 0 10px; }
+.kx-tl { border: 1px solid var(--kx-line); border-radius: 4px; background: var(--kx-bg); overflow: hidden; }
+.kx-ev { display: grid; grid-template-columns: 74px 84px 1fr 38px; gap: 12px; align-items: baseline; padding: 6px 12px;
+  border-top: 1px solid var(--kx-line); font-family: var(--kx-mono); font-size: 12.5px; line-height: 1.5; color: var(--kx-text); text-decoration: none; text-align: left; }
+.kx-ev:first-child { border-top: 0; }
+a.kx-ev:hover { background: var(--kx-panel-2); }
+.kx-t { color: var(--kx-muted); } .kx-n { color: var(--kx-accent); text-align: right; }
+.kx-ev span { text-align: left; } .kx-ev .kx-n { text-align: right; }
+.kx-sys { color: var(--kx-muted); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+.kx-et { word-break: break-word; min-width: 0; }
+
+/* ---- evidence jump links and the log viewer ----------------------------- */
+.kx-jump { font-family: var(--kx-mono); font-size: 11px; color: var(--kx-accent); text-decoration: none; white-space: nowrap; align-self: center; border: 1px solid var(--kx-line-2); border-radius: 3px; padding: 1px 7px; }
+.kx-jump:hover { background: var(--kx-panel-2); }
+.kx-view { margin: 0; max-height: 340px; overflow: auto; border: 1px solid var(--kx-line); border-radius: 4px; background: var(--kx-bg);
+  padding: 6px 0; font-family: var(--kx-mono); font-size: 12px; line-height: 1.6; color: var(--kx-text); white-space: pre; tab-size: 4; }
+.kx-vl { display: block; padding: 0 12px 0 0; border-left: 3px solid transparent; scroll-margin: 120px; }
+.kx-vl::before { content: attr(data-n); display: inline-block; width: 3.4em; padding-right: 12px; text-align: right; color: #5b6574; user-select: none; }
+.kx-vl.kx-gap { color: var(--kx-muted); font-style: italic; }
+.kx-vl.kx-hit { background: rgba(79,179,165,.10); border-left-color: var(--kx-accent); }
+.kx-vl:target { background: rgba(79,179,165,.28); border-left-color: var(--kx-accent); }
+.kx-downloads { gap: 8px !important; margin-top: -6px; }
+
 /* ---- empty and busy states -------------------------------------------- */
 .kx-start { border: 1px dashed var(--kx-line-2); border-radius: 4px; padding: 26px 24px; color: var(--kx-muted); }
 .kx-start .kx-lead { color: var(--kx-text); font-size: 15px; margin: 0 0 10px; }
@@ -229,7 +253,8 @@ footer, .built-with, .show-api { display: none !important; }
 .kx-live b { color: var(--kx-text); font-weight: 600; } .kx-live.kx-on { border-left-color: var(--kx-low); }
 .kx-live code { font-family: var(--kx-mono); color: var(--kx-text); }
 
-@media (max-width: 860px) { .gradio-container { padding: 0 12px 28px !important; } .kx-cause { font-size: 18px; } }
+@media (max-width: 860px) { .gradio-container { padding: 0 12px 28px !important; } .kx-cause { font-size: 18px; }
+  .kx-ev { grid-template-columns: 60px 1fr 30px; } .kx-sys { display: none; } }
 """ % p
 
 
