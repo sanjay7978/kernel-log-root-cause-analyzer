@@ -129,6 +129,24 @@ If `qwen3:8b` is not installed:
 ollama pull qwen3:8b
 ```
 
+### 3. Long Logs and the Context Window
+Ollama only reads about **half** of the configured context window as prompt (the other half is kept for the answer), and when a prompt is longer it silently drops the middle, which removes the instructions at the top. To avoid that, the analyzer fits the log into the model's budget *before* sending it:
+
+* The instructions and JSON schema are never cut.
+* Lines around warnings and errors are kept, with as many neighbouring lines as the budget allows; routine lines far from any warning are dropped first.
+* The earliest events (usually the cause) and the latest events (the final state) are favoured over the middle of a long log.
+* Every gap is marked `[... N lines omitted ...]`, the model is told about it, and the CLI and web UI show a warning with the number of lines sent.
+
+Settings (environment variables):
+
+| Variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `OLLAMA_NUM_CTX` | `16384` | Context window requested from Ollama. Prompt budget is half of this. Lower it (e.g. `8192`) for less memory and faster runs on long logs, at the cost of seeing fewer lines. |
+| `CHARS_PER_TOKEN` | `2.2` | Characters per token used to estimate the prompt size. Kernel logs cost 2.2-3.5, so the default errs on the safe side. |
+| `OLLAMA_TIMEOUT_SECONDS` | `300` | Long prompts take a while to read before the first token. |
+
+With the default, `qwen3:8b` uses about 7.8 GB of memory (5.9 GB at Ollama's own 4096 default). Short logs are not affected.
+
 ---
 
 ## 🖥️ Launching the Gradio Web Application

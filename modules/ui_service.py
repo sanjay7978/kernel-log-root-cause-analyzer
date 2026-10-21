@@ -325,6 +325,22 @@ def run_ui_analysis(
         f'</div>'
     )
 
+    if result.context_truncated or result.ollama_truncated:
+        parts = []
+        if result.context_truncated:
+            parts.append(
+                f"This log was too long for the local model, so only {result.sent_lines:,} of "
+                f"{result.original_cleaned_lines:,} lines were sent ({result.omitted_lines:,} routine lines left out, "
+                f"keeping the earliest and latest warnings with their context)."
+            )
+        if result.ollama_truncated:
+            parts.append("Ollama also cut the prompt, so this diagnosis may be unreliable. Try a shorter log.")
+        status_banner += (
+            '<div style="background-color:#fffbeb; border:1px solid #fde68a; border-left:5px solid #f59e0b; '
+            'border-radius:8px; padding:12px 16px; margin-bottom:12px; color:#92400e; font-size:14px;">'
+            f'⚠️ <strong>Partial log analysed.</strong> {html.escape(" ".join(parts))}</div>'
+        )
+
     root_cause_display = a.root_cause
     subsystem_badge = format_subsystem_badge(a.subsystem)
     severity_badge = format_severity_badge(a.severity)
@@ -342,6 +358,7 @@ def run_ui_analysis(
         f"| **Source** | `{source_label}` |\n"
         f"| **Raw Input Lines** | {s.original_line_count:,} |\n"
         f"| **Cleaned Lines** | {s.cleaned_line_count:,} |\n"
+        f"| **Lines Sent To Model** | {result.sent_lines or s.cleaned_line_count:,} |\n"
         f"| **Noise Reduction** | {s.reduction_percentage:.1f}% |\n"
         f"| **Candidate Markers Flagged** | {s.candidate_evidence_count} |\n"
         f"| **Local Model Used** | `{result.model_name}` |\n"
@@ -535,6 +552,7 @@ def run_live_ui_analysis(
             f"| **Capture Time** | {t.get('collect_ms', 0):.2f} ms |\n"
             f"| **Raw Lines Captured** | {s.original_line_count:,} |\n"
             f"| **Cleaned Lines** | {s.cleaned_line_count:,} |\n"
+        f"| **Lines Sent To Model** | {result.sent_lines or s.cleaned_line_count:,} |\n"
             f"| **Noise Reduction** | {s.reduction_percentage:.1f}% |\n"
             f"| **Candidate Markers Flagged** | {s.candidate_evidence_count} |\n"
             f"| **Local Model Used** | `{result.model_name}` |\n"

@@ -65,8 +65,20 @@ OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 # Configurable via environment variable; defaults to installed qwen3:8b
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 
-# Request timeout in seconds (allows adequate time for local GPU/Unified memory inference)
-OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "120"))
+# Request timeout in seconds (allows adequate time for local GPU/Unified memory inference).
+# Long prompts take a while to read before the first token, so this is generous.
+OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "300"))
+
+# Context window requested from Ollama, in tokens. Ollama accepts only about half
+# of it as prompt (the rest is left for the answer), so the prompt budget below is
+# num_ctx // 2. Ollama's own default is 4096, which leaves room for only ~2,000
+# tokens, roughly 60 lines of log.
+OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+
+# Prompt budgeting. Kernel logs cost about 2.2-3.5 characters per token; we plan
+# with the low end so the estimate errs on the side of keeping the prompt short.
+CHARS_PER_TOKEN: float = float(os.getenv("CHARS_PER_TOKEN", "2.2"))
+PROMPT_SAFETY_TOKENS: int = int(os.getenv("PROMPT_SAFETY_TOKENS", "128"))
 
 # Generation temperature: lower temperature (0.1) reduces hallucination and ensures factual consistency
 OLLAMA_TEMPERATURE: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))

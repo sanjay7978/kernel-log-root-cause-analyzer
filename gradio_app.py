@@ -19,6 +19,10 @@ from typing import Optional
 
 import gradio as gr
 
+import modules.analyzer
+import modules.preprocessor
+import modules.ui_service
+
 from config import (
     CATEGORIES,
     GRADIO_SERVER_NAME,
@@ -403,7 +407,8 @@ def create_ui():
             cleaned_excerpt = ""
             try:
                 raw, src = modules.ui_service.extract_input_content(file_obj, pasted_txt)
-                cleaned_excerpt = modules.preprocessor.preprocess_kernel_log(raw).cleaned_text
+                cleaned = modules.preprocessor.preprocess_kernel_log(raw).cleaned_text
+                cleaned_excerpt = modules.analyzer.prepare_log_for_prompt(cleaned)[0].text
             except Exception:
                 cleaned_excerpt = "(No preprocessed log available)"
 

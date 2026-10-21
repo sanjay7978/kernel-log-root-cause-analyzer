@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 from config import (
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
     OLLAMA_TEMPERATURE,
     OLLAMA_TIMEOUT_SECONDS,
 )
@@ -70,11 +71,13 @@ class OllamaClient:
         model: str = OLLAMA_MODEL,
         timeout: int = OLLAMA_TIMEOUT_SECONDS,
         temperature: float = OLLAMA_TEMPERATURE,
+        num_ctx: int = OLLAMA_NUM_CTX,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.temperature = temperature
+        self.num_ctx = num_ctx
 
     def check_health(self) -> bool:
         """
@@ -123,6 +126,7 @@ class OllamaClient:
             "stream": False,
             "options": {
                 "temperature": self.temperature,
+                "num_ctx": self.num_ctx,
             },
         }
 
