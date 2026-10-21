@@ -28,6 +28,7 @@ from config import (
     OLLAMA_MODEL,
 )
 from modules.llm_analyzer import OllamaClient
+from modules.report_export import save_report_files
 from modules.ui_service import (
     analyze_prepared,
     load_sample_log_content,
@@ -76,7 +77,7 @@ def load_sample_by_choice(choice: str):
 
 
 def clear_inputs_and_outputs():
-    """Reset every input and the report. Order matches the outputs wired in create_ui()."""
+    """Reset every input, the report and the download buttons. Order matches the outputs wired in create_ui()."""
     return (
         None,                  # file upload
         "",                    # pasted text
@@ -84,7 +85,17 @@ def clear_inputs_and_outputs():
         None,                  # sample picker
         render_empty_state(),  # report
         "",                    # cleaned log
+        gr.DownloadButton(visible=False),   # markdown download
+        gr.DownloadButton(visible=False),   # json download
     )
+
+
+def _downloads(markdown: str, json_text: str):
+    """Download buttons for a finished analysis, or hidden ones when there is nothing to download."""
+    if not markdown:
+        return gr.DownloadButton(visible=False), gr.DownloadButton(visible=False)
+    md_path, json_path = save_report_files(markdown, json_text)
+    return gr.DownloadButton(value=md_path, visible=True), gr.DownloadButton(value=json_path, visible=True)
 
 
 def _header_with_status() -> str:
@@ -151,6 +162,9 @@ def create_ui():
             with gr.Column(scale=7, min_width=420):
                 gr.HTML('<div class="kx-label kx-pane-title"><i>02</i>Report</div>')
                 report_out = gr.HTML(render_empty_state())
+                with gr.Row(elem_classes="kx-downloads"):
+                    download_md = gr.DownloadButton("Download report (.md)", visible=False, size="sm", variant="secondary")
+                    download_json = gr.DownloadButton("Download data (.json)", visible=False, size="sm", variant="secondary")
                 with gr.Accordion("Log sent to the model", open=False):
                     cleaned_log_view = gr.Textbox(
                         show_label=False, lines=12, max_lines=20, interactive=False,
@@ -160,20 +174,22 @@ def create_ui():
         # ============================================================
         # Events
         # ============================================================
-        outputs = [report_out, cleaned_log_view]
+        outputs = [report_out, cleaned_log_view, download_md, download_json]
 
         def analyse_input(file_obj, pasted_txt):
             """Check the input, show 'analysing' at once, then the report."""
             raw, label, error = read_input(file_obj, pasted_txt)
             if error:
-                yield error, ""
+                yield (error, "", *_downloads("", ""))
                 return
-            yield render_analysing(label), ""
-            yield analyze_prepared(raw, label)
+            yield (render_analysing(label), "", *_downloads("", ""))
+            report, cleaned, markdown, json_text = analyze_prepared(raw, label)
+            yield (report, cleaned, *_downloads(markdown, json_text))
 
         def analyse_live(collector, boot_offset, lines):
-            yield render_analysing("live capture"), ""
-            yield run_live_ui_analysis(collector, int(boot_offset or 0), int(lines))
+            yield (render_analysing("live capture"), "", *_downloads("", ""))
+            report, cleaned, markdown, json_text = run_live_ui_analysis(collector, int(boot_offset or 0), int(lines))
+            yield (report, cleaned, *_downloads(markdown, json_text))
 
         def pick_sample(choice):
             file_value, text_value, note = load_sample_by_choice(choice)
@@ -194,7 +210,8 @@ def create_ui():
         )
         clear_btn.click(
             clear_inputs_and_outputs, [],
-            [log_file_input, pasted_log_input, sample_note, sample_dropdown, report_out, cleaned_log_view],
+            [log_file_input, pasted_log_input, sample_note, sample_dropdown, report_out, cleaned_log_view,
+             download_md, download_json],
             show_progress="hidden",
         )
         demo.load(_header_with_status, None, header, show_progress="hidden")
