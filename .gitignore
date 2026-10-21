@@ -31,3 +31,6 @@ htmlcov/
 # Local runtime logs / scratch
 *.log.tmp
 scratch/
+
+# Evaluation output
+evaluation_results*.json
