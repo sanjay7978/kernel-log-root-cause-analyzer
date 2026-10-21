@@ -43,6 +43,9 @@ class DiagnosticAnalysis:
     confidence: str = "MEDIUM"
     uncertainty: str = "None specified"
     raw_json: Dict[str, Any] = field(default_factory=dict)
+    # Set after parsing by modules/answer_checks.py
+    unverified_evidence: List[str] = field(default_factory=list)
+    command_warnings: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to standard Python dictionary."""
@@ -56,6 +59,8 @@ class DiagnosticAnalysis:
             "possible_fixes": self.possible_fixes,
             "confidence": self.confidence,
             "uncertainty": self.uncertainty,
+            "unverified_evidence": self.unverified_evidence,
+            "command_warnings": self.command_warnings,
         }
 
 

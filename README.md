@@ -147,6 +147,13 @@ Settings (environment variables):
 
 With the default, `qwen3:8b` uses about 7.8 GB of memory (5.9 GB at Ollama's own 4096 default). Short logs are not affected.
 
+### 4. Answer Checks
+Small models sometimes quote lines that are not in the log, or suggest commands that change the system. After the model answers, `modules/answer_checks.py` checks both and flags what it finds. Nothing is removed from the answer, and commands are never run.
+
+* **Evidence:** each quoted line is looked up in the log that was actually sent to the model. Quotes that cannot be found are marked *Not found in the log* (CLI: `[NOT FOUND IN LOG]`). Differences in spacing, case, quotes, the leading timestamp, or a `...` in the middle are tolerated.
+* **Commands:** each command is checked against a list of known read-only tools. Anything that could change the system (`rm`, `fsck` without `-n`, `dmesg -C`, `ethtool -s`, redirects into files, ...) or that is not on the list is marked *Review before running* with the reason (CLI: `[REVIEW FIRST: ...]`). The check does not validate a command's options, only whether it is safe to read from.
+* The same information is in the JSON output as `unverified_evidence` and `command_warnings`.
+
 ---
 
 ## 🖥️ Launching the Gradio Web Application

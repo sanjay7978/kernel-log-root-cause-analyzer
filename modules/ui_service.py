@@ -119,32 +119,53 @@ def format_markdown_list(items: List[str], empty_msg: str = "*(None reported)*")
     return "\n".join(f"* `{html.escape(item)}`" if item.startswith(("-", "ls", "dm", "fr", "to", "ps", "jo", "vm", "sm", "ip")) else f"* {html.escape(item)}" for item in items)
 
 
-def format_evidence_list(evidence_items: List[str]) -> str:
-    """Format factual log evidence lines with distinct terminal-style blockquote."""
+def format_evidence_list(evidence_items: List[str], unverified: Optional[List[str]] = None) -> str:
+    """Format factual log evidence lines with distinct terminal-style blockquote.
+
+    Lines in `unverified` could not be found in the log and are marked in amber.
+    """
     if not evidence_items:
         return "*(No direct log line citations extracted)*"
+    not_found = set(unverified or [])
     blocks = []
     for item in evidence_items:
         clean_line = html.escape(item.strip())
+        missing = item in not_found
+        border = "#f59e0b" if missing else "#38bdf8"
+        note = (
+            '<div style="color:#fbbf24; font-family:system-ui,sans-serif; font-size:12px; margin-top:4px;">'
+            '⚠️ Not found in the log. The model may have misquoted or invented this line.</div>'
+        ) if missing else ""
         blocks.append(
             f'<div style="background-color:#1e293b; color:#f8fafc; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace; '
-            f'font-size:13px; padding:8px 12px; border-radius:6px; margin-bottom:6px; overflow-x:auto; white-space:pre-wrap; border-left:4px solid #38bdf8;">'
-            f'{clean_line}</div>'
+            f'font-size:13px; padding:8px 12px; border-radius:6px; margin-bottom:6px; overflow-x:auto; white-space:pre-wrap; border-left:4px solid {border};">'
+            f'{clean_line}{note}</div>'
         )
     return "\n".join(blocks)
 
 
-def format_commands_list(commands: List[str]) -> str:
-    """Format troubleshooting commands into copyable code blocks."""
+def format_commands_list(commands: List[str], warnings: Optional[Dict[str, str]] = None) -> str:
+    """Format troubleshooting commands into copyable code blocks.
+
+    Commands in `warnings` could change the system, or are not recognised as
+    read-only, and are marked with the reason.
+    """
     if not commands:
         return "*(No specific diagnostic commands suggested)*"
+    flagged = warnings or {}
     blocks = []
     for cmd in commands:
         clean_cmd = html.escape(cmd.strip())
+        reason = flagged.get(cmd)
+        note = (
+            f'<span style="color:#fbbf24; font-family:system-ui,sans-serif; font-size:12px; margin-left:auto;">'
+            f'⚠️ Review before running: {html.escape(reason)}</span>'
+        ) if reason else ""
         blocks.append(
             f'<div style="background-color:#0f172a; color:#38bdf8; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace; '
-            f'font-size:13px; padding:8px 12px; border-radius:6px; margin-bottom:6px; display:flex; align-items:center; gap:8px;">'
-            f'<span style="color:#64748b;">$</span> <code>{clean_cmd}</code></div>'
+            f'font-size:13px; padding:8px 12px; border-radius:6px; margin-bottom:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;'
+            f'{" border-left:4px solid #f59e0b;" if reason else ""}">'
+            f'<span style="color:#64748b;">$</span> <code>{clean_cmd}</code>{note}</div>'
         )
     return "\n".join(blocks)
 
@@ -346,9 +367,9 @@ def run_ui_analysis(
     severity_badge = format_severity_badge(a.severity)
     confidence_badge = format_confidence_badge(a.confidence)
 
-    evidence_display = format_evidence_list(a.evidence)
+    evidence_display = format_evidence_list(a.evidence, a.unverified_evidence)
     explanation_display = a.explanation
-    commands_display = format_commands_list(a.commands)
+    commands_display = format_commands_list(a.commands, a.command_warnings)
     fixes_display = format_markdown_list(a.possible_fixes, empty_msg="*(No remediation steps suggested)*")
     uncertainty_display = a.uncertainty
 
@@ -540,9 +561,9 @@ def run_live_ui_analysis(
         format_subsystem_badge(a.subsystem),
         format_severity_badge(a.severity),
         format_confidence_badge(a.confidence),
-        format_evidence_list(a.evidence),
+        format_evidence_list(a.evidence, a.unverified_evidence),
         a.explanation,
-        format_commands_list(a.commands),
+        format_commands_list(a.commands, a.command_warnings),
         format_markdown_list(a.possible_fixes, empty_msg="*(No remediation steps suggested)*"),
         a.uncertainty,
         (
