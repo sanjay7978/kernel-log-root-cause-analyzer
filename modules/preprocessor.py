@@ -27,6 +27,15 @@ ANSI_ESCAPE_PATTERN = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 # Non-printable control characters to remove (excluding tab \t and newline \n)
 CONTROL_CHAR_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+# Leading timestamps in the three formats we receive: dmesg "[  12.345678]",
+# dmesg --time-format iso, and journalctl "Oct 16 21:34:48 host kernel:".
+# Used only to compare lines; the cleaned text always keeps the original line.
+TIMESTAMP_PATTERNS = (
+    re.compile(r"^\s*(\[\s*\d+\.\d+\])\s?"),
+    re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.,]\d+[+-]\d{2}:?\d{2})\s"),
+    re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s"),
+)
+
 
 @dataclass
 class PreprocessingStats:
@@ -68,6 +77,21 @@ def strip_control_and_ansi(text: str) -> str:
     return cleaned
 
 
+def split_timestamp(line: str) -> Tuple[str, str]:
+    """
+    Split a log line into (timestamp, message).
+
+    The timestamp is "" when the line does not start with a known format.
+    Only the timestamp is dropped: numbers, addresses and error codes in the
+    message are left alone, so lines that differ in those are never merged.
+    """
+    for pattern in TIMESTAMP_PATTERNS:
+        match = pattern.match(line)
+        if match and line[match.end():].strip():
+            return match.group(1), line[match.end():].strip()
+    return "", line.strip()
+
+
 def find_candidate_evidence(line: str) -> bool:
     """
     Determine whether a line contains candidate diagnostic markers.
@@ -95,12 +119,12 @@ def preprocess_kernel_log(
       2. Split into individual lines.
       3. Strip trailing whitespace while preserving leading indentation.
       4. Remove empty / whitespace-only lines.
-      5. Collapse consecutive exact duplicate lines to prevent log flooding.
+      5. Collapse consecutive duplicate messages (timestamps ignored) to prevent log flooding.
       6. Record candidate evidence markers without diagnostic filtering.
 
     Parameters:
         raw_log: Raw log content string from loader.
-        collapse_consecutive_duplicates: If True, collapses consecutive identical lines.
+        collapse_consecutive_duplicates: If True, collapses consecutive lines with the same message.
 
     Returns:
         PreprocessedLog containing cleaned_text, PreprocessingStats, and candidate lines.
@@ -122,13 +146,19 @@ def preprocess_kernel_log(
     empty_removed = 0
     duplicates_collapsed = 0
 
-    prev_line: str = ""
+    prev_key: str = ""
+    first_ts: str = ""
+    last_ts: str = ""
     repeat_count: int = 0
 
     def flush_repeats():
         nonlocal repeat_count, duplicates_collapsed
         if repeat_count > 0:
-            cleaned_lines.append(f"    [... preceding message repeated {repeat_count} times ...]")
+            noun = "time" if repeat_count == 1 else "times"
+            note = f"preceding message repeated {repeat_count} {noun}"
+            if last_ts and last_ts != first_ts:
+                note += f", last at {last_ts}"
+            cleaned_lines.append(f"    [... {note} ...]")
             duplicates_collapsed += repeat_count
             repeat_count = 0
 
@@ -142,16 +172,21 @@ def preprocess_kernel_log(
             empty_removed += 1
             continue
 
-        # Step 4: Consecutive duplicate handling
+        # Step 4: Consecutive duplicate handling. Lines count as duplicates when
+        # their messages match, even if their timestamps differ.
+        timestamp, message = split_timestamp(line)
+        key = message
         if collapse_consecutive_duplicates:
-            if line == prev_line:
+            if key == prev_key:
                 repeat_count += 1
+                last_ts = timestamp
                 continue
             else:
                 flush_repeats()
-                prev_line = line
+                prev_key = key
+                first_ts = last_ts = timestamp
         else:
-            prev_line = line
+            prev_key = key
 
         cleaned_lines.append(line)
 
