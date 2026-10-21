@@ -144,6 +144,7 @@ Settings (environment variables):
 | `OLLAMA_NUM_CTX` | `16384` | Context window requested from Ollama. Prompt budget is half of this. Lower it (e.g. `8192`) for less memory and faster runs on long logs, at the cost of seeing fewer lines. |
 | `CHARS_PER_TOKEN` | `2.2` | Characters per token used to estimate the prompt size. Kernel logs cost 2.2-3.5, so the default errs on the safe side. |
 | `OLLAMA_TIMEOUT_SECONDS` | `300` | Long prompts take a while to read before the first token. |
+| `OLLAMA_MAX_RETRIES` | `2` | Ollama occasionally answers a long generation with an HTTP 500 or drops the connection, with nothing in its own log. The request is repeated up to this many times (after `OLLAMA_RETRY_DELAY_SECONDS`, default 3 s, times the attempt number). "Connection refused" (Ollama not running), an unknown model and timeouts are never retried. Set to `0` to turn retries off. |
 
 With the default, `qwen3:8b` uses about 7.8 GB of memory (5.9 GB at Ollama's own 4096 default). Short logs are not affected.
 

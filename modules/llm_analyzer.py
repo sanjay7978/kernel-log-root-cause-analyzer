@@ -9,8 +9,11 @@ Uses only the Python standard library (urllib.request, json).
 Contains NO diagnostic rules, prompt formatting, or UI rendering.
 """
 
+import http.client
 import json
+import logging
 import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -18,11 +21,18 @@ from typing import Any, Dict, Optional
 
 from config import (
     OLLAMA_BASE_URL,
+    OLLAMA_MAX_RETRIES,
     OLLAMA_MODEL,
     OLLAMA_NUM_CTX,
+    OLLAMA_RETRY_DELAY_SECONDS,
     OLLAMA_TEMPERATURE,
     OLLAMA_TIMEOUT_SECONDS,
 )
+
+logger = logging.getLogger("kernel_log_analyzer.llm")
+
+# A dropped connection mid-request (not "connection refused", which means Ollama is not running)
+_DROPPED_CONNECTION = (ConnectionResetError, ConnectionAbortedError, http.client.RemoteDisconnected)
 
 
 class OllamaError(Exception):
@@ -72,12 +82,16 @@ class OllamaClient:
         timeout: int = OLLAMA_TIMEOUT_SECONDS,
         temperature: float = OLLAMA_TEMPERATURE,
         num_ctx: int = OLLAMA_NUM_CTX,
+        max_retries: int = OLLAMA_MAX_RETRIES,
+        retry_delay: float = OLLAMA_RETRY_DELAY_SECONDS,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.temperature = temperature
         self.num_ctx = num_ctx
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
 
     def check_health(self) -> bool:
         """
@@ -141,37 +155,63 @@ class OllamaClient:
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                status = resp.status
-                if status != 200:
-                    raise OllamaResponseError(f"Ollama server returned unexpected status HTTP {status}")
-                raw_bytes = resp.read()
-                resp_json = json.loads(raw_bytes.decode("utf-8"))
+        resp_json = None
+        for attempt in range(1, self.max_retries + 2):
+            retry_reason = None
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    status = resp.status
+                    if status != 200:
+                        raise OllamaResponseError(f"Ollama server returned unexpected status HTTP {status}")
+                    raw_bytes = resp.read()
+                    resp_json = json.loads(raw_bytes.decode("utf-8"))
+                break
 
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                raise OllamaModelNotFoundError(
-                    f"Model '{target_model}' not found in Ollama. Pull it using: ollama pull {target_model}"
-                ) from exc
-            raise OllamaResponseError(f"Ollama HTTP error {exc.code}: {exc.reason}") from exc
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    raise OllamaModelNotFoundError(
+                        f"Model '{target_model}' not found in Ollama. Pull it using: ollama pull {target_model}"
+                    ) from exc
+                if exc.code >= 500:
+                    retry_reason = f"HTTP {exc.code}"
+                    last_error: Exception = OllamaResponseError(f"Ollama HTTP error {exc.code}: {exc.reason}")
+                    last_error.__cause__ = exc
+                else:
+                    raise OllamaResponseError(f"Ollama HTTP error {exc.code}: {exc.reason}") from exc
 
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+            except urllib.error.URLError as exc:
+                if isinstance(exc.reason, (socket.timeout, TimeoutError)):
+                    raise OllamaTimeoutError(
+                        f"Ollama inference timed out after {self.timeout}s on model '{target_model}'."
+                    ) from exc
+                last_error = OllamaConnectionError(
+                    f"Cannot connect to Ollama at {self.base_url}. Ensure the Ollama daemon is running (`ollama serve`). Details: {exc.reason}"
+                )
+                last_error.__cause__ = exc
+                if not isinstance(exc.reason, _DROPPED_CONNECTION):
+                    raise last_error from exc
+                retry_reason = "connection dropped"
+
+            except (socket.timeout, TimeoutError) as exc:
                 raise OllamaTimeoutError(
                     f"Ollama inference timed out after {self.timeout}s on model '{target_model}'."
                 ) from exc
-            raise OllamaConnectionError(
-                f"Cannot connect to Ollama at {self.base_url}. Ensure the Ollama daemon is running (`ollama serve`). Details: {exc.reason}"
-            ) from exc
 
-        except (socket.timeout, TimeoutError) as exc:
-            raise OllamaTimeoutError(
-                f"Ollama inference timed out after {self.timeout}s on model '{target_model}'."
-            ) from exc
+            except _DROPPED_CONNECTION as exc:
+                last_error = OllamaConnectionError(
+                    f"Ollama closed the connection before answering ({type(exc).__name__}). "
+                    f"The server may have crashed; check `ollama serve`."
+                )
+                last_error.__cause__ = exc
+                retry_reason = "connection dropped"
 
-        except json.JSONDecodeError as exc:
-            raise OllamaResponseError(f"Malformed JSON response received from Ollama API: {exc}") from exc
+            except json.JSONDecodeError as exc:
+                raise OllamaResponseError(f"Malformed JSON response received from Ollama API: {exc}") from exc
+
+            if attempt > self.max_retries:
+                raise last_error
+            logger.warning("Ollama request failed (%s); retrying (%d of %d)", retry_reason, attempt, self.max_retries)
+            time.sleep(self.retry_delay * attempt)
 
         content = resp_json.get("response", "")
         if not content and not resp_json.get("thinking"):

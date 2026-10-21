@@ -83,6 +83,11 @@ PROMPT_SAFETY_TOKENS: int = int(os.getenv("PROMPT_SAFETY_TOKENS", "128"))
 # Generation temperature: lower temperature (0.1) reduces hallucination and ensures factual consistency
 OLLAMA_TEMPERATURE: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
 
+# Ollama sometimes answers a long generation with an HTTP 500 or drops the connection,
+# with nothing in its own log. The request can safely be repeated, so retry a few times.
+OLLAMA_MAX_RETRIES: int = int(os.getenv("OLLAMA_MAX_RETRIES", "2"))
+OLLAMA_RETRY_DELAY_SECONDS: float = float(os.getenv("OLLAMA_RETRY_DELAY_SECONDS", "3"))
+
 # Allowed severity levels
 VALID_SEVERITIES: tuple[str, ...] = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 
