@@ -154,6 +154,18 @@ Small models sometimes quote lines that are not in the log, or suggest commands 
 * **Commands:** each command is checked against a list of known read-only tools. Anything that could change the system (`rm`, `fsck` without `-n`, `dmesg -C`, `ethtool -s`, redirects into files, ...) or that is not on the list is marked *Review before running* with the reason (CLI: `[REVIEW FIRST: ...]`). The check does not validate a command's options, only whether it is safe to read from.
 * The same information is in the JSON output as `unverified_evidence` and `command_warnings`.
 
+### 5. Evaluating the Model
+`evaluate.py` runs the full pipeline over the labelled sample logs and reports how well the local model does, so a change to the prompt, the preprocessing or the model can be compared with measurements.
+
+```bash
+python evaluate.py                    # all 9 logs, 3 runs each (about half an hour)
+python evaluate.py --runs 1           # quick check
+python evaluate.py --category usb     # one log
+python evaluate.py --model qwen3:8b --out results.json
+```
+
+It reports how many answers were usable, how often the subsystem matched the log's category, how many quoted evidence lines were really in the log, how many commands were flagged, severity and confidence counts, and the time per analysis. Whether the *root cause* is right needs a person: the report prints each answer next to the expected description from `sample_logs/metadata.json` to judge. A failed run (Ollama down, unparseable answer) is recorded instead of stopping the evaluation. Raw results are saved as JSON (`evaluation_results.json`, ignored by git).
+
 ---
 
 ## 🖥️ Launching the Gradio Web Application
