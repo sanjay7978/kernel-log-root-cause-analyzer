@@ -178,7 +178,8 @@ def display_analysis_report(result) -> None:
     print("\n[LOG EVIDENCE]")
     if a.evidence:
         for idx, item in enumerate(a.evidence, start=1):
-            print(f"  {idx}. {item}")
+            flag = "  [NOT FOUND IN LOG]" if item in a.unverified_evidence else ""
+            print(f"  {idx}. {item}{flag}")
     else:
         print("  (No direct log citations extracted)")
 
@@ -188,7 +189,8 @@ def display_analysis_report(result) -> None:
     print("\n[RECOMMENDED TROUBLESHOOTING COMMANDS]")
     if a.commands:
         for idx, cmd in enumerate(a.commands, start=1):
-            print(f"  {idx}. {cmd}")
+            warning = a.command_warnings.get(cmd)
+            print(f"  {idx}. {cmd}" + (f"  [REVIEW FIRST: {warning}]" if warning else ""))
     else:
         print("  (No specific commands recommended)")
 

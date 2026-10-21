@@ -34,6 +34,7 @@ from config import (
     OLLAMA_NUM_CTX,
     PROMPT_SAFETY_TOKENS,
 )
+from modules.answer_checks import check_commands, find_unverified_evidence
 from modules.context_budget import FitResult, fit_to_budget, log_char_budget
 from modules.llm_analyzer import OllamaClient
 from modules.log_loader import (
@@ -189,6 +190,13 @@ def analyze_raw_content(
     # 5. Parse and validate LLM output
     t4 = time.perf_counter()
     analysis = parse_and_validate_analysis(llm_resp.content)
+    # Check the answer against the log the model actually saw, and flag unsafe commands
+    analysis.unverified_evidence = find_unverified_evidence(analysis.evidence, fit.text)
+    analysis.command_warnings = check_commands(analysis.commands)
+    if analysis.unverified_evidence:
+        logger.warning("%d quoted evidence line(s) not found in the log", len(analysis.unverified_evidence))
+    if analysis.command_warnings:
+        logger.warning("%d suggested command(s) flagged for review", len(analysis.command_warnings))
     timings["parse_validate_ms"] = round((time.perf_counter() - t4) * 1000, 2)
 
     timings["total_pipeline_ms"] = round((time.perf_counter() - total_start + timings.get("load_ms", 0) / 1000) * 1000, 2)
