@@ -373,10 +373,10 @@ def test_get_live_host_status_html_linux():
 def test_run_live_ui_analysis_on_darwin_unmocked():
     """Verify run_live_ui_analysis on current macOS returns friendly error HTML."""
     if platform.system() != "Linux":
-        report_html, cleaned_log = run_live_ui_analysis()
+        report_html, cleaned_log, markdown, json_text = run_live_ui_analysis()
         assert "Live capture is not available here" in report_html
         assert "Linux machine" in report_html
-        assert cleaned_log == ""
+        assert (cleaned_log, markdown, json_text) == ("", "", "")
 
 
 def test_run_live_ui_analysis_mocked_success(mock_ollama_client):
@@ -389,8 +389,8 @@ def test_run_live_ui_analysis_mocked_success(mock_ollama_client):
     with patch("modules.live_collector.collect_live_kernel_log", return_value=(sample_log, "dmesg (live)")):
         outputs = run_live_ui_analysis(ollama_client=mock_ollama_client)
 
-        assert len(outputs) == 2
-        report_html, cleaned_log = outputs
+        assert len(outputs) == 4
+        report_html, cleaned_log, markdown, json_text = outputs
 
         assert "stress-ng" in report_html
         assert "MEMORY" in report_html
@@ -400,12 +400,13 @@ def test_run_live_ui_analysis_mocked_success(mock_ollama_client):
         assert "capture time" in report_html          # live runs show how long the capture took
         assert "dmesg (live)" in report_html
         assert "stress-ng" in cleaned_log
+        assert "dmesg (live)" in markdown and "dmesg (live)" in json_text
 
 
 def test_run_live_ui_analysis_permission_error():
     """Verify permission error is formatted nicely in UI output."""
     with patch("modules.analyzer.analyze_live", side_effect=PermissionDeniedError("dmesg read failed: Operation not permitted")):
-        report_html, cleaned_log = run_live_ui_analysis()
+        report_html, cleaned_log, markdown, json_text = run_live_ui_analysis()
         assert "Permission denied reading the kernel log" in report_html
         assert "CAP_SYSLOG" in report_html
-        assert cleaned_log == ""
+        assert (cleaned_log, markdown, json_text) == ("", "", "")

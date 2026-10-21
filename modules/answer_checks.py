@@ -70,6 +70,25 @@ def _all_in_order(pieces: List[str], log: str) -> bool:
     return True
 
 
+def locate_evidence(evidence: List[str], log_text: str) -> Dict[str, int]:
+    """
+    Where each quoted line is in the log: {quote: line number}, counting from 1.
+
+    Quotes that cannot be found are left out. When a quote is shortened with
+    "...", it is located by its first piece.
+    """
+    lines = [_normalise(line) for line in log_text.splitlines()]
+    found: Dict[str, int] = {}
+    for item in evidence:
+        for variant in _variants(item):
+            needle = next((p.strip(" ,;") for p in _ELLIPSIS.split(variant) if len(p.strip(" ,;")) >= 6), variant)
+            index = next((i for i, line in enumerate(lines) if needle and needle in line), None)
+            if index is not None:
+                found[item] = index + 1
+                break
+    return found
+
+
 def find_unverified_evidence(evidence: List[str], log_text: str) -> List[str]:
     """The quoted evidence lines that cannot be found in the log."""
     return [item for item in evidence if not evidence_in_log(item, log_text)]
