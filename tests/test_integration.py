@@ -39,8 +39,11 @@ def test_real_usb_error_log_pipeline():
     assert "unable to enumerate USB device" in raw_text
 
     result = preprocess_kernel_log(raw_text)
-    assert result.stats.cleaned_line_count == 15
-    assert result.stats.candidate_evidence_count >= 5
+    # 15 raw lines; the repeated "error -110" and "not responding" lines collapse to 11
+    assert result.stats.original_line_count == 15
+    assert result.stats.cleaned_line_count == 11
+    assert result.stats.duplicate_lines_collapsed == 7
+    assert result.stats.candidate_evidence_count >= 3
 
     # Verify all timestamps and device names are preserved
     assert "xhci_hcd" in result.cleaned_text

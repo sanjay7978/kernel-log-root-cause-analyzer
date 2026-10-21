@@ -150,3 +150,61 @@ def test_large_input_performance():
     assert res.stats.original_line_count == 10000
     assert res.stats.duplicate_lines_collapsed == 9999
     assert duration < 1.0  # Must finish in under 1 second
+
+
+# ============================================================
+# Timestamp-insensitive duplicate collapsing
+# ============================================================
+
+def test_repeats_with_different_timestamps_are_collapsed():
+    """Repeated messages that differ only in timestamp collapse into one line plus a note."""
+    raw = (
+        "[   50.218542] usb 1-1: device descriptor read/64, error -110\n"
+        "[   50.454231] usb 1-1: device descriptor read/64, error -110\n"
+        "[   50.690112] usb 1-1: device descriptor read/64, error -110\n"
+        "[   50.926040] usb 1-1: device descriptor read/64, error -110\n"
+    )
+    res = preprocess_kernel_log(raw)
+
+    assert res.stats.duplicate_lines_collapsed == 3
+    assert res.cleaned_text == (
+        "[   50.218542] usb 1-1: device descriptor read/64, error -110\n"
+        "    [... preceding message repeated 3 times, last at [   50.926040] ...]\n"
+    )
+
+
+def test_lines_differing_in_numbers_are_not_collapsed():
+    """Different error codes must never be merged, even when the rest of the line matches."""
+    raw = (
+        "[ 1.0] usb 1-1: device descriptor read/64, error -110\n"
+        "[ 2.0] usb 1-1: device descriptor read/64, error -71\n"
+    )
+    res = preprocess_kernel_log(raw)
+
+    assert res.stats.duplicate_lines_collapsed == 0
+    assert res.cleaned_text == raw
+
+
+def test_repeats_collapse_for_iso_and_journal_timestamps():
+    """ISO (dmesg --time-format iso) and journalctl timestamp prefixes are also ignored."""
+    iso = (
+        "2026-10-16T21:34:48,123456+05:30 eth0: link down\n"
+        "2026-10-16T21:34:49,223456+05:30 eth0: link down\n"
+    )
+    journal = (
+        "Oct 16 21:34:48 host kernel: eth0: link down\n"
+        "Oct 16 21:34:49 host kernel: eth0: link down\n"
+    )
+    for raw in (iso, journal):
+        res = preprocess_kernel_log(raw)
+        assert res.stats.duplicate_lines_collapsed == 1
+        assert res.stats.cleaned_line_count == 2
+
+
+def test_collapse_can_be_disabled():
+    """With collapsing turned off, repeats with different timestamps are all kept."""
+    raw = "[ 1.0] same message\n[ 2.0] same message\n"
+    res = preprocess_kernel_log(raw, collapse_consecutive_duplicates=False)
+
+    assert res.stats.duplicate_lines_collapsed == 0
+    assert res.cleaned_text == raw
