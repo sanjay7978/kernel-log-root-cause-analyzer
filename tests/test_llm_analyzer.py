@@ -113,3 +113,100 @@ def test_ollama_health_check(mock_urlopen):
 
     mock_urlopen.side_effect = Exception("error")
     assert client.check_health() is False
+
+
+# ============================================================
+# Retrying transient server failures
+# ============================================================
+
+def _ok_response():
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = json.dumps({"response": '{"root_cause": "x"}', "eval_count": 5}).encode("utf-8")
+    cm = MagicMock()
+    cm.__enter__.return_value = response
+    return cm
+
+
+def _http_error(code):
+    return urllib.error.HTTPError(url="http://localhost:11434/api/generate", code=code, msg="err", hdrs={}, fp=None)
+
+
+@patch("time.sleep")
+@patch("urllib.request.urlopen")
+def test_http_500_is_retried_and_then_succeeds(mock_urlopen, mock_sleep):
+    mock_urlopen.side_effect = [_http_error(500), _ok_response()]
+
+    result = OllamaClient(retry_delay=2).generate("prompt")
+
+    assert result.eval_count == 5
+    assert mock_urlopen.call_count == 2
+    mock_sleep.assert_called_once_with(2)
+
+
+@patch("time.sleep")
+@patch("urllib.request.urlopen")
+def test_dropped_connection_is_retried(mock_urlopen, mock_sleep):
+    import http.client
+    mock_urlopen.side_effect = [http.client.RemoteDisconnected("closed"), ConnectionResetError(), _ok_response()]
+
+    result = OllamaClient(max_retries=2).generate("prompt")
+
+    assert result.eval_count == 5
+    assert mock_urlopen.call_count == 3
+
+
+@patch("time.sleep")
+@patch("urllib.request.urlopen")
+def test_server_error_that_keeps_happening_is_raised_after_the_retries(mock_urlopen, mock_sleep):
+    mock_urlopen.side_effect = _http_error(500)
+
+    with pytest.raises(OllamaResponseError) as exc_info:
+        OllamaClient(max_retries=2).generate("prompt")
+
+    assert "HTTP error 500" in str(exc_info.value)
+    assert mock_urlopen.call_count == 3  # first attempt plus two retries
+
+
+@patch("time.sleep")
+@patch("urllib.request.urlopen")
+def test_a_dropped_connection_that_keeps_happening_reports_a_connection_error(mock_urlopen, mock_sleep):
+    import http.client
+    mock_urlopen.side_effect = http.client.RemoteDisconnected("closed")
+
+    with pytest.raises(OllamaConnectionError) as exc_info:
+        OllamaClient(max_retries=1).generate("prompt")
+
+    assert "closed the connection" in str(exc_info.value)
+    assert mock_urlopen.call_count == 2
+
+
+@patch("time.sleep")
+@patch("urllib.request.urlopen")
+def test_errors_that_will_not_fix_themselves_are_not_retried(mock_urlopen, mock_sleep):
+    import socket
+
+    # daemon not running, unknown model, client error, timeout
+    for error, expected in [
+        (urllib.error.URLError("Connection refused"), OllamaConnectionError),
+        (_http_error(404), OllamaModelNotFoundError),
+        (_http_error(400), OllamaResponseError),
+        (urllib.error.URLError(socket.timeout("timed out")), OllamaTimeoutError),
+    ]:
+        mock_urlopen.reset_mock()
+        mock_urlopen.side_effect = error
+        with pytest.raises(expected):
+            OllamaClient(max_retries=2).generate("prompt")
+        assert mock_urlopen.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+@patch("time.sleep")
+@patch("urllib.request.urlopen")
+def test_retries_can_be_turned_off(mock_urlopen, mock_sleep):
+    mock_urlopen.side_effect = _http_error(503)
+
+    with pytest.raises(OllamaResponseError):
+        OllamaClient(max_retries=0).generate("prompt")
+
+    assert mock_urlopen.call_count == 1
