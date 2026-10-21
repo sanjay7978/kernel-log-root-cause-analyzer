@@ -160,6 +160,10 @@ def display_analysis_report(result) -> None:
     print(f" Local Model Used  : {result.model_name}")
     print(f" Pipeline Metrics  : {stats.original_line_count} raw lines -> {stats.cleaned_line_count} cleaned ({stats.reduction_percentage:.1f}% reduction)")
     print(f" Total Elapsed     : {t.get('total_pipeline_ms', 0):.0f} ms (Inference: {t.get('llm_inference_ms', 0):.0f} ms | {t.get('ollama_eval_count', 0):.0f} tokens)")
+    if result.context_truncated:
+        print(f" WARNING           : log too long for the model; sent {result.sent_lines} of {result.original_cleaned_lines} lines ({result.omitted_lines} omitted)")
+    if result.ollama_truncated:
+        print(" WARNING           : Ollama cut the prompt itself; the diagnosis may be unreliable. Lower --live-lines or raise OLLAMA_NUM_CTX.")
     print(sep)
 
     print("\n[PROBABLE ROOT CAUSE]")

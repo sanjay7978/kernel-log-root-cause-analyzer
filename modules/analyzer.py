@@ -25,9 +25,16 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Tuple, Union
 
-from config import MAX_LOG_FILE_SIZE_BYTES, OLLAMA_MODEL
+from config import (
+    CHARS_PER_TOKEN,
+    MAX_LOG_FILE_SIZE_BYTES,
+    OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
+    PROMPT_SAFETY_TOKENS,
+)
+from modules.context_budget import FitResult, fit_to_budget, log_char_budget
 from modules.llm_analyzer import OllamaClient
 from modules.log_loader import (
     LogFileEmptyError,
@@ -50,6 +57,34 @@ class PipelineExecutionResult:
     timing_metrics: Dict[str, float]
     log_file_path: Optional[str] = None
     model_name: str = OLLAMA_MODEL
+    # True when the log was longer than the model can read and lines were left out
+    context_truncated: bool = False
+    original_cleaned_lines: int = 0
+    sent_lines: int = 0
+    omitted_lines: int = 0
+    # True when Ollama itself cut the prompt (our estimate was too generous)
+    ollama_truncated: bool = False
+
+
+_OMISSION_NOTE = (
+    "The log was too long for your context window, so {count} lines were left out. "
+    "Lines marked '[... N lines omitted ...]' show where. The omitted parts were "
+    "mostly routine messages, but do not assume nothing important happened there."
+)
+
+
+def prepare_log_for_prompt(cleaned_text: str) -> Tuple[FitResult, Optional[str]]:
+    """
+    Fit the cleaned log into the model's prompt budget.
+
+    Returns the (possibly reduced) log and, when lines were left out, a short
+    note for the prompt so the model does not mistake the gaps for silence.
+    """
+    overhead = len(build_diagnostic_prompt("x", context_notes=_OMISSION_NOTE.format(count=99999)))
+    budget = log_char_budget(OLLAMA_NUM_CTX, overhead, CHARS_PER_TOKEN, PROMPT_SAFETY_TOKENS)
+    fit = fit_to_budget(cleaned_text, budget)
+    note = _OMISSION_NOTE.format(count=fit.omitted_lines) if fit.truncated else None
+    return fit, note
 
 
 def analyze_raw_content(
@@ -116,9 +151,15 @@ def analyze_raw_content(
         logger.warning("Log content yielded 0 usable lines after preprocessing from %s", source_label)
         raise LogFileEmptyError("Log content contained no valid lines after preprocessing.")
 
-    # 3. Build diagnostic prompt
+    # 3. Fit the log into the model's context window, then build the prompt
     t2 = time.perf_counter()
-    prompt = build_diagnostic_prompt(preprocessed.cleaned_text)
+    fit, omission_note = prepare_log_for_prompt(preprocessed.cleaned_text)
+    if fit.truncated:
+        logger.warning(
+            "Log too long for the model context: sending %d of %d lines (%d omitted)",
+            fit.kept_lines, fit.original_lines, fit.omitted_lines,
+        )
+    prompt = build_diagnostic_prompt(fit.text, context_notes=omission_note)
     timings["prompt_build_ms"] = round((time.perf_counter() - t2) * 1000, 2)
 
     # 4. Invoke Local LLM through Ollama
@@ -131,6 +172,12 @@ def analyze_raw_content(
     timings["llm_inference_ms"] = round((time.perf_counter() - t3) * 1000, 2)
     timings["ollama_eval_duration_ms"] = llm_resp.eval_duration_ms
     timings["ollama_eval_count"] = float(llm_resp.eval_count)
+    prompt_tokens = (llm_resp.raw_payload or {}).get("prompt_eval_count") or 0
+    timings["ollama_prompt_tokens"] = float(prompt_tokens)
+    # Ollama keeps about half of num_ctx for the prompt; reaching that means it cut the prompt itself
+    ollama_truncated = prompt_tokens >= OLLAMA_NUM_CTX // 2
+    if ollama_truncated:
+        logger.warning("Ollama truncated the prompt (%d tokens); instructions may have been lost", prompt_tokens)
 
     logger.info(
         "Ollama generation finished in %.2f ms (eval: %d tokens, model: %s)",
@@ -157,10 +204,15 @@ def analyze_raw_content(
     return PipelineExecutionResult(
         analysis=analysis,
         preprocessed_stats=preprocessed.stats,
-        cleaned_log_excerpt=preprocessed.cleaned_text,
+        cleaned_log_excerpt=fit.text,
         timing_metrics=timings,
         log_file_path=source_label,
         model_name=llm_resp.model,
+        context_truncated=fit.truncated,
+        original_cleaned_lines=fit.original_lines,
+        sent_lines=fit.kept_lines,
+        omitted_lines=fit.omitted_lines,
+        ollama_truncated=ollama_truncated,
     )
 
 
