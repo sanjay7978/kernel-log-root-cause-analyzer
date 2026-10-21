@@ -1,27 +1,25 @@
 """
-UI Service Module for Kernel Log Root Cause Analyzer (Phase 3A).
+UI Service Module for Kernel Log Root Cause Analyzer.
 
-Provides pure, framework-agnostic helper functions for the Gradio UI:
-- Ingestion of uploaded files and pasted text
-- Input validation and size checks
-- Execution of the common analysis pipeline (modules/analyzer.py)
-- Formatting of structured diagnosis into rich, accessible HTML/Markdown components
-- Safe error handling with human-readable error messages
+Framework-agnostic helpers for the Gradio interface:
+  - reading the log from an upload or pasted text, with input validation
+  - running the analysis pipeline (modules/analyzer.py)
+  - rendering the result as ONE block of HTML, styled by modules/ui_theme.py
 
-Keeps all business logic out of gradio_app.py for 100% automated testability.
+All styling lives in CSS classes (prefix "kx-"); nothing here carries inline
+colours. The whole report is returned as a single string so the page updates
+in one step instead of redrawing a dozen separate components.
+
+Keeps all business logic out of gradio_app.py so it can be tested without a browser.
 """
 
 import html
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
-from config import (
-    MAX_LOG_FILE_SIZE_BYTES,
-    OLLAMA_MODEL,
-    SAMPLE_LOGS_DIR,
-)
-from modules.analyzer import PipelineExecutionResult, analyze_log, analyze_raw_content
+from config import MAX_LOG_FILE_SIZE_BYTES, OLLAMA_MODEL, SAMPLE_LOGS_DIR
+from modules.analyzer import PipelineExecutionResult, analyze_raw_content
 from modules.llm_analyzer import (
     OllamaClient,
     OllamaConnectionError,
@@ -30,162 +28,241 @@ from modules.llm_analyzer import (
     OllamaTimeoutError,
 )
 from modules.log_loader import (
-    LogFileAccessError,
     LogFileEmptyError,
     LogFileNotFoundError,
     LogFileTooLargeError,
-    LogLoaderError,
-    LogNotAFileError,
     load_log_file,
 )
-from modules.result_parser import MalformedJSONError, ResultParserError, ValidationError
+from modules.result_parser import MalformedJSONError, ValidationError
 
 logger = logging.getLogger("kernel_log_analyzer.ui_service")
 
+SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW")
 
-SEVERITY_STYLES = {
-    "CRITICAL": {
-        "bg": "#fee2e2",
-        "text": "#991b1b",
-        "border": "#f87171",
-        "icon": "🔴",
-    },
-    "HIGH": {
-        "bg": "#ffedd5",
-        "text": "#9a3412",
-        "border": "#fb923c",
-        "icon": "🟠",
-    },
-    "MEDIUM": {
-        "bg": "#fef9c3",
-        "text": "#854d0e",
-        "border": "#facc15",
-        "icon": "🟡",
-    },
-    "LOW": {
-        "bg": "#ecfdf5",
-        "text": "#065f46",
-        "border": "#34d399",
-        "icon": "🟢",
-    },
-    "UNKNOWN": {
-        "bg": "#f3f4f6",
-        "text": "#374151",
-        "border": "#9ca3af",
-        "icon": "⚪",
-    },
-}
 
+# ----------------------------------------------------------------------------
+# Small pieces
+# ----------------------------------------------------------------------------
 
 def format_severity_badge(severity: str) -> str:
-    """Format severity into an accessible visual badge."""
-    sev_upper = severity.upper()
-    style = SEVERITY_STYLES.get(sev_upper, SEVERITY_STYLES["UNKNOWN"])
-    return (
-        f'<span style="display:inline-flex; align-items:center; gap:6px; '
-        f'background-color:{style["bg"]}; color:{style["text"]}; '
-        f'border:1px solid {style["border"]}; border-radius:9999px; '
-        f'padding:4px 14px; font-weight:700; font-size:14px; letter-spacing:0.05em;">'
-        f'{style["icon"]} {sev_upper}</span>'
-    )
+    """Severity chip: a coloured square plus the word, so colour is never the only signal."""
+    sev = (severity or "UNKNOWN").upper()
+    css = sev.lower() if sev in SEVERITIES else "unknown"
+    return f'<span class="kx-chip kx-sev kx-sev-{css}">{html.escape(sev)}</span>'
 
 
 def format_subsystem_badge(subsystem: str) -> str:
-    """Format affected subsystem name into a styled badge."""
-    sub_upper = subsystem.upper()
-    return (
-        f'<span style="display:inline-flex; align-items:center; '
-        f'background-color:#eff6ff; color:#1e40af; border:1px solid #93c5fd; '
-        f'border-radius:9999px; padding:4px 14px; font-weight:600; font-size:14px;">'
-        f'⚙️ {sub_upper}</span>'
-    )
+    """Affected subsystem chip."""
+    return f'<span class="kx-chip kx-sub">{html.escape((subsystem or "other").upper())}</span>'
 
 
 def format_confidence_badge(confidence: str) -> str:
-    """Format diagnostic confidence with clear distinction from probability."""
-    conf_safe = html.escape(confidence)
-    return (
-        f'<span style="display:inline-flex; align-items:center; '
-        f'background-color:#f5f3ff; color:#5b21b6; border:1px solid #c4b5fd; '
-        f'border-radius:9999px; padding:4px 14px; font-weight:600; font-size:14px;">'
-        f'🔍 Confidence: {conf_safe}</span>'
-    )
-
-
-def format_markdown_list(items: List[str], empty_msg: str = "*(None reported)*") -> str:
-    """Format list of strings into clean markdown bullet points."""
-    if not items:
-        return empty_msg
-    return "\n".join(f"* `{html.escape(item)}`" if item.startswith(("-", "ls", "dm", "fr", "to", "ps", "jo", "vm", "sm", "ip")) else f"* {html.escape(item)}" for item in items)
+    """The model's own confidence statement, shown as its words, not as a probability."""
+    return f'<span class="kx-chip kx-conf"><span class="kx-k">confidence</span>{html.escape(confidence or "n/a")}</span>'
 
 
 def format_evidence_list(evidence_items: List[str], unverified: Optional[List[str]] = None) -> str:
-    """Format factual log evidence lines with distinct terminal-style blockquote.
+    """
+    Quoted log lines, shown like a log viewer with a line gutter.
 
     Lines in `unverified` could not be found in the log and are marked in amber.
     """
     if not evidence_items:
-        return "*(No direct log line citations extracted)*"
+        return '<p class="kx-empty">No direct log line citations extracted.</p>'
     not_found = set(unverified or [])
-    blocks = []
-    for item in evidence_items:
-        clean_line = html.escape(item.strip())
+    rows = []
+    for number, item in enumerate(evidence_items, start=1):
         missing = item in not_found
-        border = "#f59e0b" if missing else "#38bdf8"
         note = (
-            '<div style="color:#fbbf24; font-family:system-ui,sans-serif; font-size:12px; margin-top:4px;">'
-            '⚠️ Not found in the log. The model may have misquoted or invented this line.</div>'
+            '<span class="kx-note">Not found in the log. The model may have misquoted or invented this line.</span>'
         ) if missing else ""
-        blocks.append(
-            f'<div style="background-color:#1e293b; color:#f8fafc; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace; '
-            f'font-size:13px; padding:8px 12px; border-radius:6px; margin-bottom:6px; overflow-x:auto; white-space:pre-wrap; border-left:4px solid {border};">'
-            f'{clean_line}{note}</div>'
+        rows.append(
+            f'<div class="kx-row{" kx-warn" if missing else ""}">'
+            f'<span class="kx-ln">{number}</span>'
+            f'<span class="kx-body"><code>{html.escape(item.strip())}</code>{note}</span></div>'
         )
-    return "\n".join(blocks)
+    return f'<div class="kx-log">{"".join(rows)}</div>'
 
 
 def format_commands_list(commands: List[str], warnings: Optional[Dict[str, str]] = None) -> str:
-    """Format troubleshooting commands into copyable code blocks.
+    """
+    Suggested commands. Click one to select it for copying.
 
     Commands in `warnings` could change the system, or are not recognised as
     read-only, and are marked with the reason.
     """
     if not commands:
-        return "*(No specific diagnostic commands suggested)*"
+        return '<p class="kx-empty">No specific diagnostic commands suggested.</p>'
     flagged = warnings or {}
-    blocks = []
+    rows = []
     for cmd in commands:
-        clean_cmd = html.escape(cmd.strip())
         reason = flagged.get(cmd)
-        note = (
-            f'<span style="color:#fbbf24; font-family:system-ui,sans-serif; font-size:12px; margin-left:auto;">'
-            f'⚠️ Review before running: {html.escape(reason)}</span>'
-        ) if reason else ""
-        blocks.append(
-            f'<div style="background-color:#0f172a; color:#38bdf8; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,monospace; '
-            f'font-size:13px; padding:8px 12px; border-radius:6px; margin-bottom:6px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;'
-            f'{" border-left:4px solid #f59e0b;" if reason else ""}">'
-            f'<span style="color:#64748b;">$</span> <code>{clean_cmd}</code>{note}</div>'
+        note = f'<span class="kx-note">Review before running: {html.escape(reason)}</span>' if reason else ""
+        rows.append(
+            f'<div class="kx-row{" kx-warn" if reason else ""}">'
+            f'<span class="kx-prompt">$</span>'
+            f'<span class="kx-body"><code>{html.escape(cmd.strip())}</code>{note}</span></div>'
         )
-    return "\n".join(blocks)
+    return f'<div class="kx-cmds">{"".join(rows)}</div>'
+
+
+def format_fixes_list(items: List[str]) -> str:
+    """Possible fixes as a numbered list."""
+    if not items:
+        return '<p class="kx-empty">No remediation steps suggested.</p>'
+    return '<ol class="kx-fixes">' + "".join(f"<li>{html.escape(item)}</li>" for item in items) + "</ol>"
 
 
 def format_error_html(title: str, message: str, suggestion: Optional[str] = None) -> str:
-    """Generate a clean, professional error notification card."""
-    title_safe = html.escape(title)
-    msg_safe = html.escape(message)
-    sugg_html = f'<div style="margin-top:8px; font-size:13px; color:#475569;">💡 <strong>Suggestion:</strong> {html.escape(suggestion)}</div>' if suggestion else ""
-
+    """An error card with what went wrong and, when known, what to do about it."""
+    hint = f'<p class="kx-hint">{html.escape(suggestion)}</p>' if suggestion else ""
     return (
-        f'<div style="background-color:#fef2f2; border:1px solid #fecaca; border-left:5px solid #ef4444; '
-        f'border-radius:8px; padding:16px; margin:12px 0;">'
-        f'<div style="font-weight:700; color:#991b1b; font-size:15px; display:flex; align-items:center; gap:8px;">'
-        f'⚠️ {title_safe}</div>'
-        f'<div style="color:#7f1d1d; font-size:14px; margin-top:6px; line-height:1.5;">{msg_safe}</div>'
-        f'{sugg_html}'
-        f'</div>'
+        f'<div class="kx-error" role="alert"><div class="kx-error-title">{html.escape(title)}</div>'
+        f'<p>{html.escape(message)}</p>{hint}</div>'
     )
 
+
+def _section(title: str, body: str) -> str:
+    return f'<section><div class="kx-label">{html.escape(title)}</div>{body}</section>'
+
+
+def _text_block(text: str, empty: str = "None given.") -> str:
+    text = (text or "").strip()
+    return f'<p class="kx-text">{html.escape(text)}</p>' if text else f'<p class="kx-empty">{empty}</p>'
+
+
+# ----------------------------------------------------------------------------
+# Whole-page states
+# ----------------------------------------------------------------------------
+
+def render_header(model: str = OLLAMA_MODEL, ollama_online: Optional[bool] = None) -> str:
+    """Top bar: name on the left; model, locality and the Ollama status on the right."""
+    if ollama_online is None:
+        status = '<span><span class="kx-dot"></span>checking ollama</span>'
+    elif ollama_online:
+        status = '<span><span class="kx-dot kx-ok"></span>ollama online</span>'
+    else:
+        status = '<span><span class="kx-dot kx-bad"></span>ollama not reachable</span>'
+    return (
+        '<header class="kx-top">'
+        '<div class="kx-brand"><span class="kx-mark">kernel<b>/</b>log analyzer</span>'
+        '<span class="kx-tag">probable root cause from dmesg and journalctl, on this machine</span></div>'
+        f'<div class="kx-env"><span>{html.escape(model)}</span><span>local only</span>{status}</div>'
+        '</header>'
+    )
+
+
+def render_empty_state() -> str:
+    """What the report pane shows before anything has been analysed."""
+    return (
+        '<div class="kx-start">'
+        '<p class="kx-lead">Paste or upload a kernel log, or load a sample incident, then press Analyse.</p>'
+        '<p class="kx-flow">clean log &rarr; build prompt &rarr; local model &rarr; checked answer</p>'
+        '<p>You get the probable root cause, the log lines that support it, and what to check next. '
+        'Each quoted line is checked against your log, and suggested commands are only shown, never run.</p>'
+        '<p>The model runs on this computer. Nothing is sent anywhere.</p>'
+        '</div>'
+    )
+
+
+def render_analysing(source_label: str = "") -> str:
+    """Shown immediately while the local model works, so the page never looks frozen."""
+    source = f' <span class="kx-meta">{html.escape(source_label)}</span>' if source_label else ""
+    return (
+        '<div class="kx-busy" role="status" aria-live="polite">'
+        f'<p class="kx-lead">Analysing{source}</p>'
+        '<p class="kx-sub">The local model usually needs about a minute. Longer logs take longer.</p>'
+        '<div class="kx-bar"></div></div>'
+    )
+
+
+def render_live_status() -> str:
+    """Live-capture tab: what this computer can capture."""
+    from modules.live_collector import get_collector_capabilities
+
+    caps = get_collector_capabilities()
+    if caps["is_linux"]:
+        dmesg = "found" if caps["has_dmesg"] else "not found"
+        journalctl = "found" if caps["has_journalctl"] else "not found"
+        return (
+            f'<div class="kx-live kx-on"><b>Linux host ({html.escape(caps["platform"])})</b><br>'
+            f'Live capture is available. <code>dmesg</code>: {dmesg}. <code>journalctl</code>: {journalctl}.</div>'
+        )
+    return (
+        f'<div class="kx-live"><b>{html.escape(caps["platform"])} host</b><br>'
+        'Live capture needs a Linux kernel. Run this app inside a Linux machine to use it, '
+        'or use the Paste and Upload tabs here.</div>'
+    )
+
+
+# Kept under its original name for callers and tests
+get_live_host_status_html = render_live_status
+
+
+def _warning_banner(result: PipelineExecutionResult) -> str:
+    parts = []
+    if result.context_truncated:
+        parts.append(
+            f"This log was too long for the local model, so only {result.sent_lines:,} of "
+            f"{result.original_cleaned_lines:,} lines were sent ({result.omitted_lines:,} routine lines left out; "
+            "the earliest and latest warnings were kept with their context)."
+        )
+    if result.ollama_truncated:
+        parts.append("Ollama also cut the prompt, so this diagnosis may be unreliable. Try a shorter log.")
+    if not parts:
+        return ""
+    return f'<div class="kx-warnbox"><b>Partial log analysed.</b> {html.escape(" ".join(parts))}</div>'
+
+
+def _metrics(result: PipelineExecutionResult, live: bool) -> str:
+    s, t = result.preprocessed_stats, result.timing_metrics
+    rows = [("source", result.log_file_path or "")]
+    if live:
+        rows.append(("capture time", f'{t.get("collect_ms", 0) / 1000:.2f} s'))
+    rows += [
+        ("raw lines", f"{s.original_line_count:,}"),
+        ("cleaned lines", f"{s.cleaned_line_count:,}"),
+        ("sent to model", f"{result.sent_lines or s.cleaned_line_count:,}"),
+        ("repeats collapsed", f"{s.duplicate_lines_collapsed:,}"),
+        ("model", result.model_name),
+        ("prompt tokens", f'{t.get("ollama_prompt_tokens", 0):.0f}'),
+        ("answer tokens", f'{t.get("ollama_eval_count", 0):.0f}'),
+        ("model time", f'{t.get("llm_inference_ms", 0) / 1000:.1f} s'),
+        ("total time", f'{t.get("total_pipeline_ms", 0) / 1000:.1f} s'),
+    ]
+    body = "".join(f"<dt>{html.escape(k)}</dt><dd>{html.escape(str(v))}</dd>" for k, v in rows)
+    return f'<details class="kx-details"><summary>Pipeline details</summary><dl class="kx-metrics">{body}</dl></details>'
+
+
+def render_report(result: PipelineExecutionResult, source_label: str, live: bool = False) -> str:
+    """The whole diagnostic report as one HTML string."""
+    a = result.analysis
+    seconds = result.timing_metrics.get("total_pipeline_ms", 0) / 1000
+    head = (
+        f'<section><div class="kx-label">Probable root cause</div>'
+        f'<h2 class="kx-cause">{html.escape(a.root_cause)}</h2>'
+        f'<div class="kx-chips">{format_subsystem_badge(a.subsystem)}{format_severity_badge(a.severity)}'
+        f'{format_confidence_badge(a.confidence)}</div>'
+        f'<div class="kx-meta">{html.escape(source_label)} &middot; {html.escape(result.model_name)} &middot; {seconds:.0f} s</div>'
+        f'</section>'
+    )
+    return (
+        '<div class="kx-report">'
+        + _warning_banner(result)
+        + head
+        + _section("Evidence from the log", format_evidence_list(a.evidence, a.unverified_evidence))
+        + _section("Explanation", _text_block(a.explanation))
+        + _section("What the log does not show", _text_block(a.uncertainty))
+        + _section("Commands to investigate", format_commands_list(a.commands, a.command_warnings))
+        + _section("Possible fixes", format_fixes_list(a.possible_fixes))
+        + _metrics(result, live)
+        + "</div>"
+    )
+
+
+# ----------------------------------------------------------------------------
+# Input handling
+# ----------------------------------------------------------------------------
 
 def extract_input_content(
     uploaded_file: Any,
@@ -198,7 +275,7 @@ def extract_input_content(
         Tuple[str, str]: (raw_content, source_label)
 
     Raises:
-        ValueError: If neither input is provided, or both are provided ambiguously.
+        ValueError: If neither input is provided.
     """
     pasted = (pasted_text or "").strip()
     has_file = uploaded_file is not None
@@ -221,62 +298,58 @@ def extract_input_content(
     return pasted, "Pasted Log Text"
 
 
-def run_ui_analysis(
-    uploaded_file: Any,
-    pasted_text: Optional[str],
-    model_override: Optional[str] = None,
-    ollama_client: Optional[OllamaClient] = None,
-) -> Tuple[str, str, str, str, str, str, str, str, str, str, str]:
+def read_input(uploaded_file: Any, pasted_text: Optional[str]) -> Tuple[str, str, str]:
     """
-    UI Controller entrypoint: Coordinates input extraction, pipeline analysis,
-    and returns UI component outputs.
+    Read the log, turning any problem into a ready-to-show error card.
 
-    Returns an 11-tuple matching the Gradio output components:
-      1. status_html
-      2. root_cause_text
-      3. subsystem_badge_html
-      4. severity_badge_html
-      5. confidence_badge_html
-      6. evidence_html
-      7. explanation_text
-      8. commands_html
-      9. fixes_markdown
-      10. uncertainty_text
-      11. metrics_markdown
+    Returns (raw_content, source_label, error_html). error_html is "" when reading worked.
     """
-    empty_result = ("", "", "", "", "", "", "", "", "", "", "")
-
-    # 1. Extract log content
     try:
-        raw_content, source_label = extract_input_content(uploaded_file, pasted_text)
+        raw, label = extract_input_content(uploaded_file, pasted_text)
+        return raw, label, ""
     except ValueError as err:
-        return (
-            format_error_html("No Input Provided", str(err), "Drag and drop a .log file or paste text into the box below."),
-            *empty_result[1:],
-        )
+        return "", "", format_error_html("No input provided", str(err), "Paste the log text, or drop a .log or .txt file.")
     except LogFileNotFoundError as err:
-        return (
-            format_error_html("File Not Found", str(err), "Ensure the selected file exists on disk."),
-            *empty_result[1:],
-        )
+        return "", "", format_error_html("File not found", str(err), "Check that the file still exists.")
     except LogFileEmptyError as err:
-        return (
-            format_error_html("Log File Is Empty", str(err), "Provide a kernel log containing valid dmesg or journalctl text."),
-            *empty_result[1:],
-        )
+        return "", "", format_error_html("The log is empty", str(err), "Provide a kernel log with dmesg or journalctl text in it.")
     except LogFileTooLargeError as err:
         max_mb = MAX_LOG_FILE_SIZE_BYTES // (1024 * 1024)
-        return (
-            format_error_html("File Exceeds Size Limit", str(err), f"Keep uploaded kernel logs below {max_mb} MB."),
-            *empty_result[1:],
-        )
-    except Exception as exc:
-        return (
-            format_error_html("Input Extraction Error", f"Unable to read input: {exc}"),
-            *empty_result[1:],
-        )
+        return "", "", format_error_html("File is too large", str(err), f"Keep logs under {max_mb} MB.")
+    except Exception as exc:  # noqa: BLE001 - show anything unexpected as a card, not a stack trace
+        return "", "", format_error_html("Could not read the input", f"Unable to read input: {exc}")
 
-    # 2. Run analysis pipeline
+
+def _pipeline_error_card(exc: Exception, model: Optional[str]) -> str:
+    """One error card for every way the model step can fail."""
+    if isinstance(exc, OllamaConnectionError):
+        return format_error_html("Ollama is not reachable", str(exc),
+                                 "Start Ollama (open the app, or run `ollama serve` in a terminal) and try again.")
+    if isinstance(exc, OllamaModelNotFoundError):
+        return format_error_html("Model is not installed", str(exc), f"Install it with: ollama pull {model or OLLAMA_MODEL}")
+    if isinstance(exc, OllamaTimeoutError):
+        return format_error_html("The model took too long", str(exc),
+                                 "Free up some memory, try a shorter log, or raise OLLAMA_TIMEOUT_SECONDS.")
+    if isinstance(exc, OllamaResponseError):
+        return format_error_html("Ollama returned an error", str(exc), "Try again. If it keeps happening, restart Ollama.")
+    if isinstance(exc, (MalformedJSONError, ValidationError)):
+        return format_error_html("The model's answer was unusable", f"The answer did not match the expected format: {exc}",
+                                 "Run the analysis again.")
+    logger.exception("Unexpected error during analysis")
+    return format_error_html("Analysis failed", f"An unexpected error occurred: {exc}", "Check the terminal for details.")
+
+
+# ----------------------------------------------------------------------------
+# Controllers: each returns (report_html, cleaned_log_text)
+# ----------------------------------------------------------------------------
+
+def analyze_prepared(
+    raw_content: str,
+    source_label: str,
+    model_override: Optional[str] = None,
+    ollama_client: Optional[OllamaClient] = None,
+) -> Tuple[str, str]:
+    """Run the pipeline on log text that has already been read."""
     try:
         result = analyze_raw_content(
             raw_content=raw_content,
@@ -284,164 +357,22 @@ def run_ui_analysis(
             model=model_override,
             ollama_client=ollama_client,
         )
-    except OllamaConnectionError as err:
-        return (
-            format_error_html(
-                "Ollama Daemon Unreachable",
-                str(err),
-                "Make sure Ollama is running locally. Open a terminal and run: `ollama serve`",
-            ),
-            *empty_result[1:],
-        )
-    except OllamaModelNotFoundError as err:
-        model_name = model_override or OLLAMA_MODEL
-        return (
-            format_error_html(
-                "Model Not Installed",
-                str(err),
-                f"Pull the required model in your terminal using: `ollama pull {model_name}`",
-            ),
-            *empty_result[1:],
-        )
-    except OllamaTimeoutError as err:
-        return (
-            format_error_html(
-                "Inference Timeout",
-                str(err),
-                "The local model took too long to respond. Ensure your machine has sufficient free RAM.",
-            ),
-            *empty_result[1:],
-        )
-    except (MalformedJSONError, ValidationError) as err:
-        return (
-            format_error_html(
-                "Diagnostic Validation Error",
-                f"The local LLM response failed schema validation: {err}",
-                "Try running the analysis again or verify that the model has not been corrupted.",
-            ),
-            *empty_result[1:],
-        )
-    except Exception as exc:
-        logger.exception("Unexpected error during UI analysis")
-        return (
-            format_error_html(
-                "Unexpected Processing Failure",
-                f"An unexpected internal error occurred: {exc}",
-                "Check application terminal logs for technical traceback details.",
-            ),
-            *empty_result[1:],
-        )
-
-    # 3. Format structured output for UI
-    a = result.analysis
-    t = result.timing_metrics
-    s = result.preprocessed_stats
-
-    status_banner = (
-        f'<div style="background-color:#f0fdf4; border:1px solid #bbf7d0; border-left:5px solid #22c55e; '
-        f'border-radius:8px; padding:12px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
-        f'<div><span style="font-weight:700; color:#166534;">✅ Analysis Complete</span> — Source: <code>{html.escape(source_label)}</code></div>'
-        f'<div style="font-size:13px; color:#15803d;">Model: <strong>{html.escape(result.model_name)}</strong> | '
-        f'Total time: <strong>{t.get("total_pipeline_ms", 0):.0f} ms</strong> (LLM: {t.get("llm_inference_ms", 0):.0f} ms)</div>'
-        f'</div>'
-    )
-
-    if result.context_truncated or result.ollama_truncated:
-        parts = []
-        if result.context_truncated:
-            parts.append(
-                f"This log was too long for the local model, so only {result.sent_lines:,} of "
-                f"{result.original_cleaned_lines:,} lines were sent ({result.omitted_lines:,} routine lines left out, "
-                f"keeping the earliest and latest warnings with their context)."
-            )
-        if result.ollama_truncated:
-            parts.append("Ollama also cut the prompt, so this diagnosis may be unreliable. Try a shorter log.")
-        status_banner += (
-            '<div style="background-color:#fffbeb; border:1px solid #fde68a; border-left:5px solid #f59e0b; '
-            'border-radius:8px; padding:12px 16px; margin-bottom:12px; color:#92400e; font-size:14px;">'
-            f'⚠️ <strong>Partial log analysed.</strong> {html.escape(" ".join(parts))}</div>'
-        )
-
-    root_cause_display = a.root_cause
-    subsystem_badge = format_subsystem_badge(a.subsystem)
-    severity_badge = format_severity_badge(a.severity)
-    confidence_badge = format_confidence_badge(a.confidence)
-
-    evidence_display = format_evidence_list(a.evidence, a.unverified_evidence)
-    explanation_display = a.explanation
-    commands_display = format_commands_list(a.commands, a.command_warnings)
-    fixes_display = format_markdown_list(a.possible_fixes, empty_msg="*(No remediation steps suggested)*")
-    uncertainty_display = a.uncertainty
-
-    metrics_table = (
-        f"| Metric | Value |\n"
-        f"| :--- | :--- |\n"
-        f"| **Source** | `{source_label}` |\n"
-        f"| **Raw Input Lines** | {s.original_line_count:,} |\n"
-        f"| **Cleaned Lines** | {s.cleaned_line_count:,} |\n"
-        f"| **Lines Sent To Model** | {result.sent_lines or s.cleaned_line_count:,} |\n"
-        f"| **Noise Reduction** | {s.reduction_percentage:.1f}% |\n"
-        f"| **Candidate Markers Flagged** | {s.candidate_evidence_count} |\n"
-        f"| **Local Model Used** | `{result.model_name}` |\n"
-        f"| **LLM Eval Tokens** | {t.get('ollama_eval_count', 0):.0f} tokens |\n"
-        f"| **Preprocessing Time** | {t.get('preprocess_ms', 0):.2f} ms |\n"
-        f"| **LLM Inference Time** | {t.get('llm_inference_ms', 0):.2f} ms |\n"
-        f"| **Total Pipeline Time** | {t.get('total_pipeline_ms', 0):.2f} ms |\n"
-    )
-
-    return (
-        status_banner,
-        root_cause_display,
-        subsystem_badge,
-        severity_badge,
-        confidence_badge,
-        evidence_display,
-        explanation_display,
-        commands_display,
-        fixes_display,
-        uncertainty_display,
-        metrics_table,
-    )
+    except Exception as exc:  # noqa: BLE001
+        return _pipeline_error_card(exc, model_override), ""
+    return render_report(result, source_label), result.cleaned_log_excerpt
 
 
-def load_sample_log_content(category: str, filename: str) -> str:
-    """Load text content of a pre-collected sample log from disk for quick UI testing."""
-    target = SAMPLE_LOGS_DIR / category / filename
-    if not target.exists():
-        raise FileNotFoundError(f"Sample log not found: {target}")
-    return target.read_text(encoding="utf-8", errors="replace")
-
-
-def get_live_host_status_html() -> str:
-    """
-    Generate an HTML card summarizing host platform and kernel collection capabilities.
-    """
-    from modules.live_collector import get_collector_capabilities
-
-    caps = get_collector_capabilities()
-    os_name = caps["platform"]
-
-    if caps["is_linux"]:
-        dmesg_status = "✅ Available" if caps["has_dmesg"] else "❌ Not found"
-        journalctl_status = "✅ Available" if caps["has_journalctl"] else "❌ Not found"
-        return (
-            f'<div style="background-color:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:12px 16px; margin:8px 0;">'
-            f'<div style="font-weight:700; color:#166534; display:flex; align-items:center; gap:8px;">'
-            f'🐧 Linux Host Environment ({os_name})</div>'
-            f'<div style="font-size:13px; color:#15803d; margin-top:4px;">'
-            f'Live collection is active. <code>dmesg</code>: {dmesg_status} | <code>journalctl</code>: {journalctl_status}</div>'
-            f'</div>'
-        )
-
-    return (
-        f'<div style="background-color:#f8fafc; border:1px solid #cbd5e1; border-left:4px solid #0284c7; border-radius:8px; padding:12px 16px; margin:8px 0;">'
-        f'<div style="font-weight:700; color:#0f172a; display:flex; align-items:center; gap:8px;">'
-        f'🍎 {os_name} Development Host Detected</div>'
-        f'<div style="font-size:13px; color:#475569; margin-top:4px; line-height:1.4;">'
-        f'Native Linux kernel collection requires Linux. On macOS, live collection runs inside your Ubuntu VM. '
-        f'For macOS testing, use the <strong>Upload Log File</strong> or <strong>Paste Log Text</strong> tabs.</div>'
-        f'</div>'
-    )
+def run_ui_analysis(
+    uploaded_file: Any,
+    pasted_text: Optional[str],
+    model_override: Optional[str] = None,
+    ollama_client: Optional[OllamaClient] = None,
+) -> Tuple[str, str]:
+    """Upload or pasted text in; (report_html, cleaned_log_text) out."""
+    raw, label, error = read_input(uploaded_file, pasted_text)
+    if error:
+        return error, ""
+    return analyze_prepared(raw, label, model_override, ollama_client)
 
 
 def run_live_ui_analysis(
@@ -450,26 +381,8 @@ def run_live_ui_analysis(
     lines: int = 1000,
     model_override: Optional[str] = None,
     ollama_client: Optional[OllamaClient] = None,
-) -> Tuple[str, str, str, str, str, str, str, str, str, str, str, str]:
-    """
-    UI Controller entrypoint for live Linux kernel capture.
-
-    Returns a 12-tuple matching the Gradio output components:
-      1. status_html
-      2. root_cause_text
-      3. subsystem_badge_html
-      4. severity_badge_html
-      5. confidence_badge_html
-      6. evidence_html
-      7. explanation_text
-      8. commands_html
-      9. fixes_markdown
-      10. uncertainty_text
-      11. metrics_markdown
-      12. cleaned_log_excerpt
-    """
-    empty_result = ("", "", "", "", "", "", "", "", "", "", "", "")
-
+) -> Tuple[str, str]:
+    """Capture the live kernel log and analyse it; returns (report_html, cleaned_log_text)."""
     from modules.analyzer import analyze_live
     from modules.live_collector import (
         CollectionExecutionError,
@@ -487,100 +400,25 @@ def run_live_ui_analysis(
             ollama_client=ollama_client,
         )
     except PlatformNotSupportedError as err:
-        return (
-            format_error_html(
-                "Host Platform Incompatible",
-                str(err),
-                "Run this command inside your Ubuntu VM, or use stored sample logs in the Upload/Paste tabs.",
-            ),
-            *empty_result[1:],
-        )
+        return format_error_html("Live capture is not available here", str(err),
+                                 "Run the app on a Linux machine, or use stored logs in the Upload and Paste tabs."), ""
     except PermissionDeniedError as err:
-        return (
-            format_error_html(
-                "Kernel Log Read Permission Denied",
-                str(err),
-                "Run with sudo or grant CAP_SYSLOG / disable kernel.dmesg_restrict.",
-            ),
-            *empty_result[1:],
-        )
+        return format_error_html("Permission denied reading the kernel log", str(err),
+                                 "Run with sudo, grant CAP_SYSLOG, or relax kernel.dmesg_restrict."), ""
     except CollectorNotFoundError as err:
-        return (
-            format_error_html(
-                "Collector Binary Not Found",
-                str(err),
-                "Install util-linux (for dmesg) or systemd (for journalctl).",
-            ),
-            *empty_result[1:],
-        )
+        return format_error_html("Collector not found", str(err),
+                                 "Install util-linux (for dmesg) or systemd (for journalctl)."), ""
     except CollectionExecutionError as err:
-        return (
-            format_error_html(
-                "Live Collection Failed",
-                str(err),
-                "Verify the kernel ring buffer is populated.",
-            ),
-            *empty_result[1:],
-        )
-    except OllamaConnectionError as err:
-        return (
-            format_error_html(
-                "Ollama Daemon Unreachable",
-                str(err),
-                "Make sure Ollama is running locally: `ollama serve`",
-            ),
-            *empty_result[1:],
-        )
-    except Exception as exc:
-        logger.exception("Unexpected error during live UI analysis")
-        return (
-            format_error_html(
-                "Live Analysis Failed",
-                f"An unexpected error occurred: {exc}",
-            ),
-            *empty_result[1:],
-        )
+        return format_error_html("Live capture failed", str(err), "Check that the kernel ring buffer has content."), ""
+    except Exception as exc:  # noqa: BLE001
+        return _pipeline_error_card(exc, model_override), ""
 
-    a = result.analysis
-    t = result.timing_metrics
-    s = result.preprocessed_stats
+    return render_report(result, result.log_file_path or "Live Linux capture", live=True), result.cleaned_log_excerpt
 
-    status_banner = (
-        f'<div style="background-color:#f0fdf4; border:1px solid #bbf7d0; border-left:5px solid #22c55e; '
-        f'border-radius:8px; padding:12px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">'
-        f'<div><span style="font-weight:700; color:#166534;">✅ Live Capture Complete</span> — Source: <code>{html.escape(result.log_file_path or "Live Linux")}</code></div>'
-        f'<div style="font-size:13px; color:#15803d;">Model: <strong>{html.escape(result.model_name)}</strong> | '
-        f'Capture: <strong>{t.get("collect_ms", 0):.0f} ms</strong> | '
-        f'Total time: <strong>{t.get("total_pipeline_ms", 0):.0f} ms</strong></div>'
-        f'</div>'
-    )
 
-    return (
-        status_banner,
-        a.root_cause,
-        format_subsystem_badge(a.subsystem),
-        format_severity_badge(a.severity),
-        format_confidence_badge(a.confidence),
-        format_evidence_list(a.evidence, a.unverified_evidence),
-        a.explanation,
-        format_commands_list(a.commands, a.command_warnings),
-        format_markdown_list(a.possible_fixes, empty_msg="*(No remediation steps suggested)*"),
-        a.uncertainty,
-        (
-            f"| Metric | Value |\n"
-            f"| :--- | :--- |\n"
-            f"| **Source** | `{result.log_file_path}` |\n"
-            f"| **Capture Time** | {t.get('collect_ms', 0):.2f} ms |\n"
-            f"| **Raw Lines Captured** | {s.original_line_count:,} |\n"
-            f"| **Cleaned Lines** | {s.cleaned_line_count:,} |\n"
-        f"| **Lines Sent To Model** | {result.sent_lines or s.cleaned_line_count:,} |\n"
-            f"| **Noise Reduction** | {s.reduction_percentage:.1f}% |\n"
-            f"| **Candidate Markers Flagged** | {s.candidate_evidence_count} |\n"
-            f"| **Local Model Used** | `{result.model_name}` |\n"
-            f"| **LLM Eval Tokens** | {t.get('ollama_eval_count', 0):.0f} tokens |\n"
-            f"| **LLM Inference Time** | {t.get('llm_inference_ms', 0):.2f} ms |\n"
-            f"| **Total Pipeline Time** | {t.get('total_pipeline_ms', 0):.2f} ms |\n"
-        ),
-        result.cleaned_log_excerpt,
-    )
-
+def load_sample_log_content(category: str, filename: str) -> str:
+    """Load text content of a bundled sample log for quick testing."""
+    target = SAMPLE_LOGS_DIR / category / filename
+    if not target.exists():
+        raise FileNotFoundError(f"Sample log not found: {target}")
+    return target.read_text(encoding="utf-8", errors="replace")

@@ -351,35 +351,36 @@ def test_analyze_live_pipeline(mock_ollama_client):
 # ============================================================
 
 def test_get_live_host_status_html_darwin():
-    """Verify host status banner reflects Darwin on macOS."""
+    """Verify the host status card says live capture needs Linux when on macOS."""
     with patch("platform.system", return_value="Darwin"), \
          patch("modules.live_collector.is_linux", return_value=False):
         html = get_live_host_status_html()
-        assert "Development Host Detected" in html
-        assert "Ubuntu VM" in html
+        assert "Darwin host" in html
+        assert "needs a Linux kernel" in html
 
 
 def test_get_live_host_status_html_linux():
-    """Verify host status banner reflects Linux when active."""
+    """Verify the host status card reflects Linux when active."""
     with patch("platform.system", return_value="Linux"), \
          patch("modules.live_collector.is_linux", return_value=True), \
          patch("modules.live_collector.shutil.which", side_effect=lambda cmd: f"/bin/{cmd}"):
         html = get_live_host_status_html()
-        assert "Linux Host Environment" in html
-        assert "Live collection is active" in html
+        assert "Linux host" in html
+        assert "Live capture is available" in html
+        assert "kx-on" in html
 
 
 def test_run_live_ui_analysis_on_darwin_unmocked():
     """Verify run_live_ui_analysis on current macOS returns friendly error HTML."""
     if platform.system() != "Linux":
-        outputs = run_live_ui_analysis()
-        status_html = outputs[0]
-        assert "Host Platform Incompatible" in status_html
-        assert "Ubuntu VM" in status_html
+        report_html, cleaned_log = run_live_ui_analysis()
+        assert "Live capture is not available here" in report_html
+        assert "Linux machine" in report_html
+        assert cleaned_log == ""
 
 
 def test_run_live_ui_analysis_mocked_success(mock_ollama_client):
-    """Verify run_live_ui_analysis outputs full 12-tuple report on success."""
+    """Verify run_live_ui_analysis returns the whole report as one HTML string, plus the cleaned log."""
     sample_log = (
         "[ 120.450123] stress-ng invoked oom-killer: gfp_mask=0x1100cca\n"
         "[ 120.450130] Out of memory: Killed process 3412 (stress-ng-vm)\n"
@@ -388,24 +389,23 @@ def test_run_live_ui_analysis_mocked_success(mock_ollama_client):
     with patch("modules.live_collector.collect_live_kernel_log", return_value=(sample_log, "dmesg (live)")):
         outputs = run_live_ui_analysis(ollama_client=mock_ollama_client)
 
-        assert len(outputs) == 12
-        status_banner, root_cause, sub_badge, sev_badge, conf_badge, evidence, exp, cmds, fixes, unc, metrics, cleaned_log = outputs
+        assert len(outputs) == 2
+        report_html, cleaned_log = outputs
 
-        assert "Live Capture Complete" in status_banner
-        assert "stress-ng" in root_cause
-        assert "MEMORY" in sub_badge
-        assert "HIGH" in sev_badge
-        assert "HIGH" in conf_badge
-        assert "oom-killer" in evidence
-        assert "free -m" in cmds
-        assert "Raw Lines Captured" in metrics
+        assert "stress-ng" in report_html
+        assert "MEMORY" in report_html
+        assert "HIGH" in report_html
+        assert "oom-killer" in report_html
+        assert "free -m" in report_html
+        assert "capture time" in report_html          # live runs show how long the capture took
+        assert "dmesg (live)" in report_html
         assert "stress-ng" in cleaned_log
 
 
 def test_run_live_ui_analysis_permission_error():
     """Verify permission error is formatted nicely in UI output."""
     with patch("modules.analyzer.analyze_live", side_effect=PermissionDeniedError("dmesg read failed: Operation not permitted")):
-        outputs = run_live_ui_analysis()
-        status_html = outputs[0]
-        assert "Kernel Log Read Permission Denied" in status_html
-        assert "CAP_SYSLOG" in status_html
+        report_html, cleaned_log = run_live_ui_analysis()
+        assert "Permission denied reading the kernel log" in report_html
+        assert "CAP_SYSLOG" in report_html
+        assert cleaned_log == ""
