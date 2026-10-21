@@ -18,15 +18,27 @@ from config import MAX_LOG_FILE_SIZE_BYTES, SAMPLE_LOGS_DIR
 from modules.analyzer import analyze_log, analyze_raw_content
 from modules.llm_analyzer import LLMResponse, OllamaClient, OllamaConnectionError
 from modules.log_loader import LogFileEmptyError, LogFileTooLargeError
+from modules.analyzer import PipelineExecutionResult
+from modules.preprocessor import PreprocessingStats
+from modules.result_parser import DiagnosticAnalysis
 from modules.ui_service import (
     extract_input_content,
     format_commands_list,
+    format_confidence_badge,
+    format_error_html,
     format_evidence_list,
+    format_fixes_list,
     format_severity_badge,
     format_subsystem_badge,
     load_sample_log_content,
+    read_input,
+    render_analysing,
+    render_empty_state,
+    render_header,
+    render_report,
     run_ui_analysis,
 )
+from modules.ui_theme import CSS, build_theme
 import gradio_app
 
 
@@ -122,68 +134,71 @@ def test_extract_input_content_no_input_raises_value_error():
 
 def test_run_ui_analysis_with_pasted_log(mock_ollama_client):
     pasted = "[ 120.450123] stress-ng invoked oom-killer: gfp_mask=0x1100cca\n"
-    outputs = run_ui_analysis(
+    report_html, cleaned_log = run_ui_analysis(
         uploaded_file=None,
         pasted_text=pasted,
         ollama_client=mock_ollama_client,
     )
 
-    status_html, root_cause, sub_badge, sev_badge, conf_badge, evidence, exp, cmds, fixes, unc, metrics = outputs
-
-    assert "Analysis Complete" in status_html
-    assert "stress-ng" in root_cause
-    assert "MEMORY" in sub_badge
-    assert "HIGH" in sev_badge
-    assert "free -m" in cmds
-    assert "cgroup limits" in fixes
-    assert "Raw Input Lines" in metrics
+    assert "stress-ng" in report_html            # root cause
+    assert "MEMORY" in report_html               # subsystem chip
+    assert "kx-sev-high" in report_html          # severity chip
+    assert "free -m" in report_html              # commands
+    assert "Add swap space" in report_html       # fixes
+    assert "raw lines" in report_html            # pipeline details
+    assert "stress-ng invoked oom-killer" in cleaned_log
 
 
 def test_run_ui_analysis_with_uploaded_file(mock_ollama_client, tmp_path: Path):
     log_file = tmp_path / "system_oom.log"
     log_file.write_text("[ 120.450123] stress-ng invoked oom-killer: gfp_mask=0x1100cca\n", encoding="utf-8")
 
-    outputs = run_ui_analysis(
+    report_html, cleaned_log = run_ui_analysis(
         uploaded_file=str(log_file),
         pasted_text=None,
         ollama_client=mock_ollama_client,
     )
 
-    status_html, root_cause, sub_badge, sev_badge, *rest = outputs
-    assert "Analysis Complete" in status_html
-    assert "system_oom.log" in status_html
-    assert "stress-ng" in root_cause
+    assert "system_oom.log" in report_html
+    assert "stress-ng" in report_html
+    assert cleaned_log.strip() != ""
 
 
 def test_run_ui_analysis_no_input_returns_friendly_error():
-    outputs = run_ui_analysis(uploaded_file=None, pasted_text="")
-    status_html = outputs[0]
-    assert "No Input Provided" in status_html
-    assert "Drag and drop a .log file" in status_html
+    report_html, cleaned_log = run_ui_analysis(uploaded_file=None, pasted_text="")
+    assert "No input provided" in report_html
+    assert "drop a .log or .txt file" in report_html
+    assert cleaned_log == ""
 
 
 def test_run_ui_analysis_empty_file_returns_error(tmp_path: Path):
     empty_file = tmp_path / "zero_byte.log"
     empty_file.touch()
 
-    outputs = run_ui_analysis(uploaded_file=str(empty_file), pasted_text="")
-    status_html = outputs[0]
-    assert "Log File Is Empty" in status_html
+    report_html, _ = run_ui_analysis(uploaded_file=str(empty_file), pasted_text="")
+    assert "The log is empty" in report_html
 
 
 def test_run_ui_analysis_ollama_unreachable_returns_friendly_error():
     mock_client = MagicMock(spec=OllamaClient)
     mock_client.generate.side_effect = OllamaConnectionError("Connection refused to 127.0.0.1:11434")
 
-    outputs = run_ui_analysis(
+    report_html, _ = run_ui_analysis(
         uploaded_file=None,
         pasted_text="[ 0.1] kernel sample line\n",
         ollama_client=mock_client,
     )
 
-    status_html = outputs[0]
-    assert "Ollama Daemon Unreachable" in status_html
-    assert "ollama serve" in status_html
+    assert "Ollama is not reachable" in report_html
+    assert "ollama serve" in report_html
+
+
+def test_read_input_returns_the_text_or_an_error_card(tmp_path: Path):
+    raw, label, error = read_input(None, "[ 1.0] something failed\n")
+    assert (raw, label, error) == ("[ 1.0] something failed", "Pasted Log Text", "")
+
+    raw, label, error = read_input(None, "")
+    assert raw == "" and "No input provided" in error
 
 
 # ============================================================
@@ -191,15 +206,26 @@ def test_run_ui_analysis_ollama_unreachable_returns_friendly_error():
 # ============================================================
 
 def test_format_severity_badges():
-    for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]:
+    for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
         badge = format_severity_badge(sev)
-        assert sev in badge
-        assert "border-radius" in badge
+        assert sev in badge                       # the word is always there, colour is never the only signal
+        assert f"kx-sev-{sev.lower()}" in badge
+    assert "kx-sev-unknown" in format_severity_badge("UNKNOWN")
+    assert "kx-sev-unknown" in format_severity_badge("something else")
 
 
 def test_format_subsystem_badge():
     sub_badge = format_subsystem_badge("memory")
     assert "MEMORY" in sub_badge
+
+
+def test_formatters_escape_html_from_the_model():
+    hostile = "<script>alert(1)</script>"
+    assert "<script>" not in format_evidence_list([hostile])
+    assert "<script>" not in format_commands_list([hostile], {hostile: hostile})
+    assert "<script>" not in format_confidence_badge(hostile)
+    assert "<script>" not in format_fixes_list([hostile])
+    assert "<script>" not in format_error_html(hostile, hostile, hostile)
 
 
 def test_format_evidence_list():
@@ -209,10 +235,18 @@ def test_format_evidence_list():
     ]
     html_out = format_evidence_list(evidence)
     assert "error -110" in html_out
-    assert "font-family:ui-monospace" in html_out
+    assert "kx-log" in html_out
+    assert html_out.count("kx-ln") == 2          # one numbered row per line
+    assert "kx-warn" not in html_out
 
     # Empty list
     assert "No direct log line citations" in format_evidence_list([])
+
+
+def test_format_evidence_list_marks_lines_not_found_in_the_log():
+    html_out = format_evidence_list(["real line", "invented line"], ["invented line"])
+    assert html_out.count("Not found in the log") == 1
+    assert html_out.count("kx-warn") == 1
 
 
 def test_format_commands_list():
@@ -220,9 +254,91 @@ def test_format_commands_list():
     html_out = format_commands_list(cmds)
     assert "dmesg | grep -i usb" in html_out
     assert "lsusb -v" in html_out
+    assert "Review before running" not in html_out
 
     # Empty list
     assert "No specific diagnostic commands" in format_commands_list([])
+
+
+def test_format_commands_list_marks_flagged_commands_with_the_reason():
+    html_out = format_commands_list(["lsusb", "rm -rf /"], {"rm -rf /": "'rm' deletes files"})
+    assert html_out.count("Review before running") == 1
+    assert "deletes files" in html_out
+
+
+def test_format_fixes_list():
+    assert format_fixes_list(["Replace the cable", "Update the driver"]).count("<li>") == 2
+    assert "No remediation steps" in format_fixes_list([])
+
+
+# ============================================================
+# 4b. Whole-page rendering
+# ============================================================
+
+def _result(**changes):
+    analysis = DiagnosticAnalysis(
+        root_cause="USB device failed to enumerate", subsystem="usb", severity="MEDIUM",
+        evidence=["usb 1-1: unable to enumerate USB device"], explanation="Timeouts, then reset.",
+        commands=["lsusb"], possible_fixes=["Try another port"], confidence="HIGH (clear)",
+        uncertainty="Cable or port?",
+    )
+    values = dict(
+        analysis=analysis, preprocessed_stats=PreprocessingStats(15, 11, 0, 7, 3), cleaned_log_excerpt="x",
+        timing_metrics={"total_pipeline_ms": 54000, "llm_inference_ms": 53000, "ollama_prompt_tokens": 1100,
+                        "ollama_eval_count": 650},
+        log_file_path="Pasted Log Text", model_name="qwen3:8b", original_cleaned_lines=11, sent_lines=11,
+    )
+    values.update(changes)
+    return PipelineExecutionResult(**values)
+
+
+def test_render_report_contains_every_section_in_one_block():
+    html_out = render_report(_result(), "Pasted Log Text")
+
+    for heading in ["Probable root cause", "Evidence from the log", "Explanation", "What the log does not show",
+                    "Commands to investigate", "Possible fixes", "Pipeline details"]:
+        assert heading in html_out
+    assert "USB device failed to enumerate" in html_out
+    assert "kx-sev-medium" in html_out and "confidence" in html_out
+    assert "54 s" in html_out and "qwen3:8b" in html_out
+    assert "Partial log analysed" not in html_out    # nothing was cut
+
+
+def test_render_report_warns_when_the_log_was_cut():
+    html_out = render_report(
+        _result(context_truncated=True, original_cleaned_lines=735, sent_lines=100, omitted_lines=635), "big.log",
+    )
+    assert "Partial log analysed" in html_out
+    assert "100 of 735" in html_out
+
+    assert "Ollama also cut the prompt" in render_report(_result(ollama_truncated=True), "x")
+
+
+def test_render_report_flags_unverified_evidence_and_commands():
+    result = _result()
+    result.analysis.unverified_evidence = ["usb 1-1: unable to enumerate USB device"]
+    result.analysis.command_warnings = {"lsusb": "'lsusb' is invented for this test"}
+
+    html_out = render_report(result, "x")
+    assert "Not found in the log" in html_out
+    assert "Review before running" in html_out
+
+
+def test_page_states_empty_analysing_and_header():
+    assert "press Analyse" in render_empty_state()
+    busy = render_analysing("big.log")
+    assert "Analysing" in busy and "big.log" in busy and "kx-bar" in busy
+    assert "ollama online" in render_header("qwen3:8b", True)
+    assert "ollama not reachable" in render_header("qwen3:8b", False)
+    assert "checking ollama" in render_header("qwen3:8b", None)
+
+
+def test_clear_resets_every_wired_output():
+    cleared = gradio_app.clear_inputs_and_outputs()
+    assert len(cleared) == 6
+    assert cleared[0] is None and cleared[1] == "" and cleared[3] is None
+    assert "press Analyse" in cleared[4]
+    assert cleared[5] == ""
 
 
 # ============================================================
@@ -264,3 +380,16 @@ def test_create_ui_hierarchy():
     demo = gradio_app.create_ui()
     assert isinstance(demo, gr.Blocks)
     assert demo.title == "Kernel Log Root Cause Analyzer"
+
+
+def test_the_page_makes_no_outside_requests_and_gradio_analytics_are_off():
+    """The tool promises nothing leaves the machine, so no fonts, CDNs or analytics."""
+    import os
+
+    assert os.environ["GRADIO_ANALYTICS_ENABLED"] == "False"
+    assert "http" not in CSS and "@import" not in CSS and "url(" not in CSS
+    assert gradio_app.create_ui().analytics_enabled is False
+
+
+def test_theme_builds():
+    assert isinstance(build_theme(), gr.themes.Base)

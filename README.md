@@ -60,7 +60,7 @@ kernel_log_root_cause_analyzer/
 ├── config.py                # Paths, categories, Ollama model, live settings, and Gradio server settings
 ├── requirements.txt         # Dependencies (pytest, gradio)
 ├── app.py                   # Unified CLI application (Phases 1, 2, 3A & 3B)
-├── gradio_app.py            # Professional Gradio web dashboard (Phases 3A & 3B)
+├── gradio_app.py            # Gradio web interface (two-pane workbench)
 │
 ├── modules/
 │   ├── __init__.py
@@ -71,7 +71,8 @@ kernel_log_root_cause_analyzer/
 │   ├── result_parser.py     # JSON extraction, schema validation, and fallback parsing
 │   ├── live_collector.py    # Safe Linux live kernel log capture (dmesg, journalctl, capability detection)
 │   ├── analyzer.py          # Unified orchestration service for in-memory, file, and live inputs
-│   └── ui_service.py        # Pure UI controller logic, badge formatting & live capture handling
+│   ├── ui_service.py        # UI controller logic and report rendering (one HTML block)
+│   └── ui_theme.py          # Dark console theme: palette, CSS, Gradio theme
 │
 ├── sample_logs/             # Ground-truth evaluation dataset (real Linux logs)
 │   ├── metadata.json        # Incident catalog (category, origin source, description)
@@ -184,20 +185,25 @@ python app.py --ui
 Once started, open your web browser at:
 👉 **`http://127.0.0.1:7860`**
 
-### UI Tabs & Features:
-1. **📄 Upload Log File:** Drag-and-drop any text-based kernel log file (`.log`, `.txt`).
-2. **📋 Paste Log Text:** Directly paste terminal output from `dmesg` or `journalctl -k`.
-3. **🐧 Live Linux Capture:**
-   * **Host Capability Indicator:** Detects whether running on a native Linux host or macOS/Windows development machine.
-   * **Collection Tool Selection:** `auto` (detects `journalctl` or `dmesg`), `dmesg`, or `journalctl`.
-   * **Boot Offset Selection:** Current boot (`0`), previous boot (`-1` for post-crash analysis), or historical boots (`-2`, etc.).
-   * **Line Count Slider:** Adjust between 100 and 5000 lines.
-4. **⚡ 1-Click Sample Incident Loaders:** Click **"Load Real Memory OOM Log"** or **"Load Real USB Timeout Log"** to instantly test the system with real-world failure logs.
-5. **🔍 Evidence vs. Inference Distinction:**
-   * **Evidence:** Factual lines directly quoted from the log (terminal-styled callout).
-   * **Explanation:** Inferences explaining why the kernel reacted this way.
-   * **Uncertainty & Limitations:** Explicitly documents what cannot be proven from this log alone.
-6. **📊 Technical Performance Accordion:** Inspect raw line counts, noise reduction percentage, exact execution timings (capture, preprocessing, prompt construction, Ollama inference, and parsing), along with the sanitized log text.
+### The interface
+A dark, console-style workbench with the log going in on the left and the report coming out on the right (stacked on a phone). The input pane stays in view while a long report scrolls.
+
+**Input**
+* **Paste:** paste `dmesg` or `journalctl -k` output.
+* **Upload:** drop a `.log` or `.txt` file (up to 50 MB).
+* **Live capture:** reads the kernel log from a Linux host (collector `auto` / `dmesg` / `journalctl`, boot offset `0` or `-1` for after a crash, 100-5000 lines). On other systems the tab explains that it needs a Linux kernel.
+* **Load a sample incident:** puts one of the 9 bundled logs in the Paste tab.
+
+**Report** (one block, updated in a single step)
+* Pressing **Analyse** shows an "Analysing" state at once, then the report. The local model usually needs about a minute.
+* **Probable root cause** as the headline, with chips for subsystem, severity (always shown as a word, not only a colour) and the model's own confidence.
+* **Evidence from the log:** the quoted lines, numbered like a log viewer. A line the model quoted that is not in your log is marked in amber: *Not found in the log*.
+* **Explanation** and **What the log does not show** (the model's uncertainty).
+* **Commands to investigate:** click one to select it for copying. Commands that could change the system, or that are not on the list of known read-only tools, are marked *Review before running* with the reason. Commands are never run by the tool.
+* **Possible fixes**, and a collapsed **Pipeline details** (line counts, tokens, timings). A warning banner appears when a long log had to be cut to fit the model.
+* **Log sent to the model:** the exact cleaned text, in a collapsed box under the report.
+
+**Light and private by design:** the styling is plain CSS in `modules/ui_theme.py`, with no web fonts, no CDN and no scripts, and Gradio's usage analytics and online version check are switched off. The page makes no requests to anything but the local app.
 
 ---
 
